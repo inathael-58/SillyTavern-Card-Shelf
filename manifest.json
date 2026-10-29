@@ -1,5 +1,5 @@
 {
-    "display_name": "Janitor Browser",
+    "display_name": "Card Shelf",
     "loading_order": 120,
     "requires": [],
     "optional": [],
@@ -7,7 +7,7 @@
     "css": "style.css",
     "author": "Kitima",
     "version": "1.0.0",
-    "homePage": "https://github.com/inathael-58/SillyTavern-Janitor-Browser",
+    "homePage": "https://github.com/inathael-58/SillyTavern-Card-Shelf",
     "auto_update": false,
     "description": "Browse JanitorAI Ranking, Trending and Latest bots inside SillyTavern, import them as SillyTavern cards, convert lorebooks to SillyTavern World Info, and freeze or hide Datacat Browser's dancing top-bar cat."
 }

@@ -1,5 +1,5 @@
 /*
- * Janitor Browser — SillyTavern UI extension
+ * Card Shelf — SillyTavern UI extension
  *
  * Browse JanitorAI's Ranking, Trending and Latest bots inside SillyTavern, import one as a
  * normal SillyTavern card, and turn its lorebook (or any lorebook file) into a World Info
@@ -13,9 +13,9 @@ import {
     pngWithCard, routedUrl, routeOrder, shortCount, toWorldInfo,
 } from './lib.js';
 
-const MODULE = 'janitor_browser';
+const MODULE = 'card_shelf';
 const VERSION = '1.0.0'; // keep in sync with manifest.json
-const LOG = '[JanitorBrowser]';
+const LOG = '[CardShelf]';
 
 const DEFAULTS = Object.freeze({
     datacatCat: 'animated', // animated | still | hidden — Datacat Browser's top-bar cat
@@ -56,10 +56,10 @@ const saveSettings = () => ctx().saveSettingsDebounced();
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const toast = {
-    ok: (m, t) => globalThis.toastr?.success(m, t ?? 'Janitor Browser'),
-    info: (m, t) => globalThis.toastr?.info(m, t ?? 'Janitor Browser'),
-    warn: (m, t) => globalThis.toastr?.warning(m, t ?? 'Janitor Browser'),
-    err: (m, t) => globalThis.toastr?.error(m, t ?? 'Janitor Browser'),
+    ok: (m, t) => globalThis.toastr?.success(m, t ?? 'Card Shelf'),
+    info: (m, t) => globalThis.toastr?.info(m, t ?? 'Card Shelf'),
+    warn: (m, t) => globalThis.toastr?.warning(m, t ?? 'Card Shelf'),
+    err: (m, t) => globalThis.toastr?.error(m, t ?? 'Card Shelf'),
 };
 const errText = e => String(e?.message ?? e);
 
@@ -385,7 +385,7 @@ function openBrowser(tab) {
     root.className = 'jb_root';
     root.innerHTML = `
         <div class="jb_backdrop"></div>
-        <section class="jb_panel" role="dialog" aria-modal="true" aria-label="Janitor Browser">
+        <section class="jb_panel" role="dialog" aria-modal="true" aria-label="Card Shelf">
             <header class="jb_head">
                 <div class="jb_titlebar">
                     <div class="jb_title"><i class="fa-solid fa-compass"></i><b>JanitorAI</b><i class="fa-solid fa-circle-notch fa-spin jb_spin" hidden></i></div>
@@ -871,7 +871,7 @@ function renderTopbar() {
     el = document.createElement('div');
     el.id = 'jb_topbar';
     el.className = 'drawer';
-    el.innerHTML = '<div class="drawer-toggle"><div class="drawer-icon fa-solid fa-compass interactable jb_ticon" title="Janitor Browser — Ranking / Trending" tabindex="0"></div></div>';
+    el.innerHTML = '<div class="drawer-toggle"><div class="drawer-icon fa-solid fa-compass interactable jb_ticon" title="Card Shelf — Ranking / Trending" tabindex="0"></div></div>';
     const before = document.getElementById('rightNavHolder');
     if (before?.parentElement === holder) holder.insertBefore(el, before); else holder.append(el);
     el.addEventListener('click', e => { e.stopPropagation(); openBrowser(); });
@@ -885,7 +885,7 @@ function addWandItem() {
     item.id = 'jb_wand';
     item.className = 'list-group-item flex-container flexGap5 interactable';
     item.tabIndex = 0;
-    item.innerHTML = '<div class="fa-solid fa-compass extensionsMenuExtensionButton"></div><span>Janitor Browser</span>';
+    item.innerHTML = '<div class="fa-solid fa-compass extensionsMenuExtensionButton"></div><span>Card Shelf</span>';
     item.addEventListener('click', () => openBrowser());
     menu.append(item);
 }
@@ -899,11 +899,11 @@ function renderSettingsPanel() {
     <div id="jb_settings" class="jb_settings">
         <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Janitor Browser <small class="jb_version">v${VERSION}</small></b>
+                <b>Card Shelf <small class="jb_version">v${VERSION}</small></b>
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
-                <div class="jb_row"><div id="jb_set_open" class="menu_button"><i class="fa-solid fa-compass"></i> เปิด Janitor Browser</div></div>
+                <div class="jb_row"><div id="jb_set_open" class="menu_button"><i class="fa-solid fa-compass"></i> เปิด Card Shelf</div></div>
                 <label class="checkbox_label"><input type="checkbox" id="jb_set_topbar"> ไอคอนเข็มทิศบนแถบด้านบน (ไอคอนนิ่ง ไม่มีแอนิเมชัน)</label>
 
                 <h4 class="jb_sethead">แมว Datacat บนแถบด้านบน</h4>
@@ -1014,11 +1014,12 @@ function registerCommand() {
         if (c.SlashCommandParser?.addCommandObject && c.SlashCommand?.fromProps) {
             c.SlashCommandParser.addCommandObject(c.SlashCommand.fromProps({
                 name: 'janitor',
+                aliases: ['shelf'],
                 callback: run,
-                helpString: 'เปิด Janitor Browser — ใส่แท็บได้: ranking, trending, latest, link, lore',
+                helpString: 'เปิด Card Shelf — ใส่แท็บได้: ranking, trending, latest, link, lore',
             }));
         } else {
-            c.registerSlashCommand?.('janitor', run, [], 'เปิด Janitor Browser', true, true);
+            c.registerSlashCommand?.('janitor', run, [], 'เปิด Card Shelf', true, true);
         }
     } catch (e) { console.warn(LOG, 'slash command', e); }
 }
@@ -1035,7 +1036,7 @@ jQuery(() => {
         applyDatacatCat();
         watchDatacat();
         setTimeout(() => { renderTopbar(); addWandItem(); }, 1500);
-        globalThis.JanitorBrowser = { open: openBrowser, version: VERSION };
+        globalThis.CardShelf = { open: openBrowser, version: VERSION };
         console.log(LOG, `v${VERSION} ready`);
     } catch (e) {
         console.error(LOG, 'start failed', e);

@@ -1,4 +1,4 @@
-# Janitor Browser (SillyTavern Extension)
+# Card Shelf (SillyTavern Extension)
 
 เปิดดูบอทบน JanitorAI จากใน SillyTavern ได้เลย มีแท็บ **Ranking**, **Trending** และ **ล่าสุด** ค้นหาได้ กดนำเข้าเป็นการ์ดของ SillyTavern ได้ในแตะเดียว แล้ว**แปลงลอร์บุ๊คให้เป็นลอร์บุ๊คของ SillyTavern** พร้อมผูกกับตัวละครให้เอง
 
@@ -15,7 +15,7 @@
 ใน SillyTavern เปิด **Extensions → Install extension** แล้ววาง URL นี้:
 
 ```
-https://github.com/inathael-58/SillyTavern-Janitor-Browser
+https://github.com/inathael-58/SillyTavern-Card-Shelf
 ```
 
 ### เปิดพร็อกซีของ SillyTavern (จำเป็นสำหรับแท็บ Ranking / Trending)
@@ -26,15 +26,15 @@ JanitorAI ไม่ให้เว็บอื่นอ่านรายชื�
 2. แก้ `enableCorsProxy: false` เป็น `enableCorsProxy: true`
 3. รีสตาร์ท SillyTavern
 
-แล้วไปที่ **Extensions → Janitor Browser → การเชื่อมต่อ JanitorAI → ทดสอบการเชื่อมต่อ** ได้ ถ้าไม่เปิดพร็อกซี แท็บรายชื่อจะขึ้นวิธีแก้ให้ แต่แท็บ **ลิงก์** กับ **ลอร์บุ๊ค** ยังใช้ได้ตามปกติ
+แล้วไปที่ **Extensions → Card Shelf → การเชื่อมต่อ JanitorAI → ทดสอบการเชื่อมต่อ** ได้ ถ้าไม่เปิดพร็อกซี แท็บรายชื่อจะขึ้นวิธีแก้ให้ แต่แท็บ **ลิงก์** กับ **ลอร์บุ๊ค** ยังใช้ได้ตามปกติ
 
 ## เปิดใช้
 
 | ทาง | |
 |---|---|
 | ไอคอนเข็มทิศ 🧭 บนแถบด้านบน | ปิดได้ในการตั้งค่า |
-| เมนูไม้กายสิทธิ์ (Extensions) → Janitor Browser | |
-| คำสั่ง `/janitor` | ใส่แท็บต่อท้ายได้: `/janitor trending`, `/janitor latest`, `/janitor link`, `/janitor lore` ใช้ทำปุ่มใน Quick Reply หรือ Quick Dock ได้ |
+| เมนูไม้กายสิทธิ์ (Extensions) → Card Shelf | |
+| คำสั่ง `/janitor` หรือ `/shelf` | ใส่แท็บต่อท้ายได้: `/janitor trending`, `/janitor latest`, `/janitor link`, `/janitor lore` ใช้ทำปุ่มใน Quick Reply หรือ Quick Dock ได้ |
 
 ## นำเข้าบอท
 
@@ -65,7 +65,7 @@ JanitorAI ไม่ให้เว็บอื่นอ่านรายชื�
 
 ## แมว Datacat
 
-ใน **Extensions → Janitor Browser → แมว Datacat บนแถบด้านบน**:
+ใน **Extensions → Card Shelf → แมว Datacat บนแถบด้านบน**:
 
 | ตัวเลือก | |
 |---|---|

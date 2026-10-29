@@ -1,5 +1,5 @@
 /*
- * Janitor Browser — pure helpers (no DOM, no SillyTavern), so they can be tested in Node.
+ * Card Shelf — pure helpers (no DOM, no SillyTavern), so they can be tested in Node.
  *
  *  - JanitorAI list / character JSON → one plain shape the browser draws
  *  - JanitorAI character → Character Card V2 (what SillyTavern imports)
@@ -164,7 +164,7 @@ export function cardFromJanitor(raw, { lorebook = null } = {}) {
         creator: c.creator,
         character_version: '',
         extensions: {
-            janitor_browser: { source: 'janitorai', id: c.id, url: c.url },
+            card_shelf: { source: 'janitorai', id: c.id, url: c.url },
         },
     };
     const book = lorebook ? toCharacterBook(lorebook, `${c.name}'s Lorebook`) : null;

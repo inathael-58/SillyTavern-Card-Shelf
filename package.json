@@ -1,5 +1,5 @@
 {
-    "name": "sillytavern-janitor-browser",
+    "name": "sillytavern-card-shelf",
     "private": true,
     "type": "module",
     "scripts": { "test": "node --test test/*.test.mjs" }

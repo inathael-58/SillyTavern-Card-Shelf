@@ -92,7 +92,7 @@ test('JanitorAI character becomes a V2 card', () => {
     assert.match(card.data.creator_notes, /Public blurb/);
     assert.match(card.data.creator_notes, /janitorai\.com\/characters\/c3/);
     assert.deepEqual(card.data.tags, ['Fantasy']);
-    assert.equal(card.data.extensions.janitor_browser.id, 'c3');
+    assert.equal(card.data.extensions.card_shelf.id, 'c3');
     assert.equal(card.data.character_book.name, "Cara's Lorebook");
     assert.deepEqual(card.data.character_book.entries[0].keys, ['sword']);
 });
