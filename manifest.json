@@ -6,8 +6,8 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Kitima",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "homePage": "https://github.com/inathael-58/SillyTavern-Card-Shelf",
     "auto_update": false,
-    "description": "Browse JanitorAI Ranking, Trending and Latest bots inside SillyTavern, import them as SillyTavern cards, convert lorebooks to SillyTavern World Info, and freeze or hide Datacat Browser's dancing top-bar cat."
+    "description": "One window with two tabs, Datacat and JanitorAI: browse JanitorAI Ranking and Trending, copy a bot link and let Datacat build and import the card. Also freezes or hides Datacat Browser's dancing top-bar cat."
 }
