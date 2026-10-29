@@ -566,10 +566,14 @@ export function cardFromPng(pngBytes) {
 
 // ---------------------------------------------------------------- fetching
 
-/** Build the URL a request should go through. route: st | direct | custom. */
+/**
+ * Build the URL a request should go through. route: st | direct | custom.
+ * SillyTavern's /proxy/ reads the target from the path, so an unencoded "?page=2&sort=…"
+ * would be taken as the proxy's own query and dropped; the whole URL is encoded instead.
+ */
 export function routedUrl(url, route, customTemplate = '') {
     switch (route) {
-        case 'st': return `/proxy/${url}`;
+        case 'st': return `/proxy/${encodeURIComponent(url)}`;
         case 'custom': {
             const tpl = String(customTemplate || '').trim();
             if (!tpl) return '';

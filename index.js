@@ -871,7 +871,7 @@ function renderTopbar() {
     el = document.createElement('div');
     el.id = 'jb_topbar';
     el.className = 'drawer';
-    el.innerHTML = '<div class="drawer-toggle"><div class="drawer-icon fa-solid fa-compass interactable jb_ticon" title="Card Shelf — Ranking / Trending" tabindex="0"></div></div>';
+    el.innerHTML = '<div class="drawer-toggle"><div class="drawer-icon fa-regular fa-compass interactable jb_ticon" title="Card Shelf — Ranking / Trending" tabindex="0"></div></div>';
     const before = document.getElementById('rightNavHolder');
     if (before?.parentElement === holder) holder.insertBefore(el, before); else holder.append(el);
     el.addEventListener('click', e => { e.stopPropagation(); openBrowser(); });

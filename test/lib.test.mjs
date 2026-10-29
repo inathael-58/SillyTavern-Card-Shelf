@@ -185,7 +185,7 @@ test('card is written into a PNG and read back (UTF-8 safe)', () => {
 });
 
 test('routes', () => {
-    assert.equal(routedUrl('https://a.b/c?d=1', 'st'), '/proxy/https://a.b/c?d=1');
+    assert.equal(routedUrl('https://a.b/c?d=1&e=2', 'st'), '/proxy/https%3A%2F%2Fa.b%2Fc%3Fd%3D1%26e%3D2');
     assert.equal(routedUrl('https://a.b/c', 'custom', 'https://p.x/?url={url}'), 'https://p.x/?url=https%3A%2F%2Fa.b%2Fc');
     assert.equal(routedUrl('https://a.b/c', 'custom', 'https://p.x/'), 'https://p.x/https%3A%2F%2Fa.b%2Fc');
     assert.equal(routedUrl('https://a.b/c', 'custom', ''), '');
