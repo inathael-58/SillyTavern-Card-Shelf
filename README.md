@@ -2,13 +2,16 @@
 
 หน้าต่างเดียว สองแท็บ: **Datacat** กับ **JanitorAI**
 
-ดูบอทบน JanitorAI (Ranking, Trending) แล้วคัดลอกลิงก์บอท ไปแท็บ Datacat วางลิงก์ Datacat จะสร้างการ์ดและนำเข้าให้ first mes ครบ ลอร์บุ๊คมาด้วย เพราะเป็นระบบนำเข้าของ Datacat เอง Card Shelf ไม่ได้แปลงอะไรเอง
+แท็บ JanitorAI แสดงรายชื่อบอท **Ranking / Trending / ล่าสุด** ค้นหาได้ แตะบอทแล้วกด **ส่งไป Datacat** Card Shelf จะคัดลอกลิงก์บอทแล้วพาไปแท็บ Datacat วางลิงก์ Datacat จะสร้างการ์ดและนำเข้าให้ first mes ครบ ลอร์บุ๊คมาด้วย เพราะเป็นระบบนำเข้าของ Datacat เอง Card Shelf ไม่ได้แปลงอะไรเอง
 
 และมีตัวเลือก **หยุด/ซ่อนแมวเต้นของ Datacat** บนแถบด้านบน สำหรับคนที่จอกระตุก
 
 ## ต้องมี
 
-- [Datacat SillyTavern Browser](https://github.com/datacat-run/datacat-sillytavern-browser) — แท็บ Datacat คือหน้าต่างของ Datacat ตัวนี้ ถ้ายังไม่ได้ติดตั้ง แท็บ Datacat จะบอกวิธีติดตั้ง
+- [Datacat SillyTavern Browser](https://github.com/datacat-run/datacat-sillytavern-browser) — แท็บ Datacat คือหน้าต่างของ Datacat ตัวนี้
+- **เปิดพร็อกซีของ SillyTavern** สำหรับรายชื่อในแท็บ JanitorAI: เปิดไฟล์ `config.yaml` ในโฟลเดอร์ SillyTavern แก้ `enableCorsProxy: false` เป็น `enableCorsProxy: true` แล้วรีสตาร์ท SillyTavern
+
+JanitorAI ไม่ยอมให้เว็บอื่นแสดงหน้าเว็บของมันในกรอบ และไม่ให้เบราว์เซอร์อ่านข้อมูลตรง ๆ Card Shelf จึงอ่านรายชื่อผ่านพร็อกซีที่มีอยู่ใน SillyTavern แล้ววาดรายชื่อเอง
 
 ## ติดตั้ง
 
@@ -21,20 +24,22 @@ https://github.com/inathael-58/SillyTavern-Card-Shelf
 ## ใช้
 
 1. เปิด Card Shelf จากไอคอนเข็มทิศ 🧭 บนแถบด้านบน เมนูไม้กายสิทธิ์ (Extensions) หรือคำสั่ง `/shelf`
-2. แท็บ **JanitorAI** กด **Ranking** / **Trending** / **หน้าแรก** ด้านบนได้
-3. เจอบอทที่ชอบ กดค้าง (มือถือ) หรือคลิกขวา (คอม) ที่บอท → **คัดลอกลิงก์**
-4. ไปแท็บ **Datacat** วางลิงก์ แล้วนำเข้าตามปกติของ Datacat
+2. แท็บ **JanitorAI** เลือก **Ranking** / **Trending** / **ล่าสุด** หรือค้นหาชื่อบอท เลื่อนลงเพื่อโหลดเพิ่ม
+3. แตะบอทที่ชอบ แล้วกด **ส่งไป Datacat**
+4. Card Shelf คัดลอกลิงก์ให้แล้วสลับไปแท็บ **Datacat** วางลิงก์ลงในช่องของ Datacat แล้วนำเข้าตามปกติ
 5. นำเข้าเสร็จ Datacat เปิดแชทใหม่ให้ Card Shelf ปิดเองให้เห็นแชทเลย (ปิดตัวเลือกนี้ได้ในการตั้งค่า)
 
-สลับแท็บไปมาได้ หน้า JanitorAI กับ Datacat ไม่โหลดใหม่ ปิด Card Shelf แล้วเปิดใหม่ก็ยังอยู่หน้าเดิม
+ปุ่มอื่นในหน้าบอท: **คัดลอกลิงก์** (เฉย ๆ) และ **เปิดใน JanitorAI** ถ้าคัดลอกอัตโนมัติไม่ได้ จะมีช่องลิงก์ให้กดค้างคัดลอกเอง
 
-คำสั่ง: `/shelf` · `/shelf datacat` · `/shelf janitor` · `/shelf ranking` · `/shelf trending` (`/janitor` ก็ได้)
+สลับแท็บไปมาได้ รายชื่อกับหน้า Datacat อยู่ที่เดิม ไม่โหลดใหม่
 
-### ถ้าแท็บ JanitorAI ว่าง หรือล็อกอินไม่ได้
+คำสั่ง: `/shelf` · `/shelf datacat` · `/shelf janitor` · `/shelf ranking` · `/shelf trending` · `/shelf latest` (`/janitor` ก็ได้)
 
-บางเบราว์เซอร์ไม่ให้เว็บอื่นแสดง JanitorAI ข้างใน หรือไม่ให้ล็อกอินในกรอบ (cookie ของเว็บอื่น) กดปุ่ม ↗ ที่แถบด้านบนของแท็บ เพื่อเปิด JanitorAI ในหน้าต่างใหม่ คัดลอกลิงก์บอทจากตรงนั้น แล้วกลับมาวางในแท็บ Datacat ได้เหมือนกัน
+### ถ้ารายชื่อไม่ขึ้น
 
-ถ้า JanitorAI ย้ายหน้า Ranking หรือ Trending ไป แก้ลิงก์ของปุ่มได้ใน **Extensions → Card Shelf → ปุ่มในแท็บ JanitorAI**
+แท็บ JanitorAI จะบอกว่าติดอะไรพร้อมวิธีแก้ เช่น พร็อกซียังไม่เปิด หรือ Cloudflare ของ JanitorAI บล็อกเครื่องที่รัน SillyTavern ไปที่ **Extensions → Card Shelf → การเชื่อมต่อ JanitorAI → ทดสอบการเชื่อมต่อ** ได้ ระหว่างนั้นกด **เปิดบนเว็บ JanitorAI** แล้วคัดลอกลิงก์บอทจากเว็บ มาวางในแท็บ Datacat ได้เหมือนกัน
+
+ถ้า JanitorAI เปลี่ยนชื่อการเรียง (sort) ของ Ranking / Trending แก้ได้ในหน้าตั้งค่าเดียวกัน
 
 ## แมว Datacat
 
@@ -50,9 +55,8 @@ GIF ที่เล่นตลอดทำให้เบราว์เซอ�
 
 ## ทำงานยังไง
 
-แท็บ Datacat คือหน้าต่างของ Datacat SillyTavern Browser เอง (iframe เดิมของมัน พร้อมระบบนำเข้าของมัน) Card Shelf แค่ขอให้ Datacat เปิดหน้าต่าง แล้วย้ายหน้าต่างนั้นมาวางในแท็บ Card Shelf ไม่ได้คุยกับ datacat.run เอง ไม่ได้อ่านหรือส่งข้อมูลการ์ด
-
-แท็บ JanitorAI เป็นเว็บ janitorai.com ในกรอบ ไม่ต้องเปิดพร็อกซีใน `config.yaml`
+- แท็บ Datacat คือหน้าต่างของ Datacat SillyTavern Browser เอง (iframe เดิมของมัน พร้อมระบบนำเข้าของมัน) Card Shelf แค่ขอให้ Datacat เปิดหน้าต่าง แล้วย้ายมาวางในแท็บ ไม่ได้คุยกับ datacat.run เอง
+- แท็บ JanitorAI อ่านรายชื่อบอทจาก JanitorAI ผ่านพร็อกซีของ SillyTavern ในเครื่องคุณ ไม่ส่งแชท API key หรือการตั้งค่าใด ๆ ออกไป
 
 ## พัฒนา
 

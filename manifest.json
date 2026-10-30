@@ -6,8 +6,8 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Kitima",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "homePage": "https://github.com/inathael-58/SillyTavern-Card-Shelf",
     "auto_update": false,
-    "description": "One window with two tabs, Datacat and JanitorAI: browse JanitorAI Ranking and Trending, copy a bot link and let Datacat build and import the card. Also freezes or hides Datacat Browser's dancing top-bar cat."
+    "description": "One window with two tabs, Datacat and JanitorAI: browse JanitorAI Ranking, Trending and Latest, send a bot link to Datacat and let Datacat build and import the card. Also freezes or hides Datacat Browser's dancing top-bar cat."
 }
