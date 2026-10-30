@@ -12,13 +12,16 @@ export const JANITOR_SITE = 'https://janitorai.com';
 export const JANITOR_API = 'https://janitorai.com/hampter';
 export const JANITOR_AVATARS = 'https://ella.janitorai.com/bot-avatars/';
 
-// Tab → the `sort` value JanitorAI's own site sends. Editable in the settings, in case
+// Tab → the `sort` value sent to JanitorAI. The names follow the site's own home-page
+// segments (janitorai.com/?segment=trending24 …). Editable in the settings, in case
 // JanitorAI renames one.
 export const DEFAULT_SORTS = Object.freeze({
-    ranking: 'popular',
+    trending24: 'trending24',
     trending: 'trending',
+    popular: 'popular',
     latest: 'latest',
 });
+const SEGMENTS = new Set(['trending24', 'trending', 'popular']);
 
 /**
  * URL of one page of characters.
@@ -116,8 +119,12 @@ export function normalizeList(json, page = 1) {
     return { items, total, page: num(pick(json, 'page')) || page, pages };
 }
 
-/** JanitorAI's own search page for a tab, to open in a new window. */
+/**
+ * JanitorAI's own page for a tab, to open in a new window: the home-page segment
+ * (?segment=trending24, trending, popular), or the search page for a search or another sort.
+ */
 export function siteUrl({ sort = 'popular', search = '', nsfw = true } = {}) {
+    if (!search && SEGMENTS.has(sort)) return `${JANITOR_SITE}/?segment=${encodeURIComponent(sort)}`;
     const q = new URLSearchParams({ mode: nsfw ? 'all' : 'sfw', sort, page: '1' });
     if (search) q.set('search', search);
     return `${JANITOR_SITE}/search?${q}`;

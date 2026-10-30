@@ -1,8 +1,8 @@
 /*
  * Card Shelf — SillyTavern UI extension
  *
- * One window, two tabs: Datacat and JanitorAI. The JanitorAI tab lists JanitorAI's Ranking,
- * Trending and Latest bots; tap one, "ส่งไป Datacat" copies its link and switches to the
+ * One window, two tabs: Datacat and JanitorAI. The JanitorAI tab lists JanitorAI's Trending
+ * (24 hours and week), Popular and Latest bots; tap one, "ส่งไป Datacat" copies its link and switches to the
  * Datacat tab, where Datacat turns it into a card and imports it — Datacat's own import,
  * so first messages and lorebooks come out right. Also lets you freeze or hide Datacat
  * Browser's dancing top-bar cat.
@@ -18,7 +18,7 @@ import {
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.1.0'; // keep in sync with manifest.json
+const VERSION = '2.2.0'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -26,7 +26,7 @@ const DEFAULTS = Object.freeze({
     datacatCat: 'animated', // animated | still | hidden — Datacat Browser's top-bar cat
     topbar: true,           // our own icon in the top bar (a still icon, never animated)
     tab: 'datacat',         // datacat | janitor — the tab Card Shelf opens on
-    jtab: 'ranking',        // ranking | trending | latest — the JanitorAI list shown
+    jtab: 'trending24',     // trending24 | trending | popular | latest — the JanitorAI list shown
     closeAfterImport: true, // close Card Shelf when Datacat opens the imported chat
     nsfw: true,             // include NSFW bots in the JanitorAI lists
     route: 'auto',          // auto | st | direct | custom — how JanitorAI is reached
@@ -36,10 +36,13 @@ const DEFAULTS = Object.freeze({
 });
 
 const LISTS = [
-    ['ranking', 'fa-trophy', 'Ranking'],
-    ['trending', 'fa-fire', 'Trending'],
-    ['latest', 'fa-clock', 'ล่าสุด'],
+    ['trending24', 'fa-fire', '24 ชม.', 'Trending 24 ชั่วโมง'],
+    ['trending', 'fa-fire', 'สัปดาห์', 'Trending สัปดาห์นี้'],
+    ['popular', 'fa-trophy', 'Popular', 'Popular'],
+    ['latest', 'fa-clock', 'ล่าสุด', 'ล่าสุด'],
 ];
+// Names used by 2.1 and earlier (and still accepted by /shelf).
+const LIST_ALIASES = { ranking: 'popular', trending7: 'trending', week: 'trending', '24h': 'trending24' };
 
 const ctx = () => SillyTavern.getContext();
 
@@ -50,10 +53,15 @@ function settings() {
     for (const [k, v] of Object.entries(DEFAULTS)) {
         if (s[k] === undefined) s[k] = (v && typeof v === 'object') ? { ...v } : v;
     }
+    if (s.sorts.ranking !== undefined) { // 2.1's "Ranking" is now "Popular"
+        if (s.sorts.ranking !== 'popular') s.sorts.popular = s.sorts.ranking;
+        delete s.sorts.ranking;
+    }
     for (const [k, v] of Object.entries(DEFAULT_SORTS)) if (!s.sorts[k]) s.sorts[k] = v;
     delete s.pages; // 2.0's frame buttons
     if (s.tab !== 'janitor') s.tab = 'datacat';
-    if (!LISTS.some(l => l[0] === s.jtab)) s.jtab = 'ranking';
+    s.jtab = LIST_ALIASES[s.jtab] ?? s.jtab;
+    if (!LISTS.some(l => l[0] === s.jtab)) s.jtab = DEFAULTS.jtab;
     return s;
 }
 const saveSettings = () => ctx().saveSettingsDebounced();
@@ -219,7 +227,7 @@ const ui = {
     tab: 'datacat',
     docked: false,
     resize: null,
-    jtab: 'ranking',
+    jtab: 'trending24',
     search: '',
     lists: {},      // listKey() → { tab, search, items, page, pages, done, loading, error }
     observer: null,
@@ -246,15 +254,14 @@ function buildWindow() {
             </header>
             <div class="cs_note" hidden></div>
             <div class="cs_jbar">
-                ${LISTS.map(([id, icon, label]) => `<button data-list="${id}"><i class="fa-solid ${icon}"></i><span>${label}</span></button>`).join('')}
-                <span class="cs_spacer"></span>
-                <i class="fa-solid fa-circle-notch fa-spin cs_spin" hidden></i>
-                <button class="cs_jreload" title="โหลดใหม่"><i class="fa-solid fa-rotate"></i></button>
-                <button class="cs_jout" title="เปิดหน้านี้บนเว็บ JanitorAI"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
+                ${LISTS.map(([id, icon, label, title]) => `<button data-list="${id}" title="${title}"><i class="fa-solid ${icon}"></i><span>${label}</span></button>`).join('')}
             </div>
             <form class="cs_searchrow">
                 <i class="fa-solid fa-magnifying-glass"></i>
                 <input type="search" class="cs_search" placeholder="ค้นหาบอทบน JanitorAI" autocomplete="off" spellcheck="false" enterkeyhint="search">
+                <i class="fa-solid fa-circle-notch fa-spin cs_spin" hidden></i>
+                <button type="button" class="cs_jreload" title="โหลดใหม่"><i class="fa-solid fa-rotate"></i></button>
+                <button type="button" class="cs_jout" title="เปิดหน้านี้บนเว็บ JanitorAI"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
             </form>
             <div class="cs_body">
                 <div class="cs_dock"></div>
@@ -307,6 +314,7 @@ function buildWindow() {
 }
 
 function openShelf(tab) {
+    tab = LIST_ALIASES[tab] ?? tab;
     if (!ui.root) ui.root = buildWindow();
     const s = settings();
     ui.root.hidden = false;
@@ -683,14 +691,12 @@ function renderSettingsPanel() {
                     </label>
                     <label class="cs_field">API<input type="text" id="cs_set_api" class="text_pole"></label>
                     <div class="cs_sorts">
-                        <label class="cs_field">Ranking sort<input type="text" class="text_pole" data-sort="ranking"></label>
-                        <label class="cs_field">Trending sort<input type="text" class="text_pole" data-sort="trending"></label>
-                        <label class="cs_field">ล่าสุด sort<input type="text" class="text_pole" data-sort="latest"></label>
+                        ${LISTS.map(([id, , , title]) => `<label class="cs_field">${title}<input type="text" class="text_pole" data-sort="${id}"></label>`).join('')}
                     </div>
                     <div class="cs_row"><div id="cs_set_test" class="menu_button"><i class="fa-solid fa-plug"></i> ทดสอบการเชื่อมต่อ</div><div id="cs_set_reset" class="menu_button">ค่าเริ่มต้น</div></div>
                     <div id="cs_set_testout" class="cs_setnote"></div>
                 </details>
-                <small class="cs_setnote">เปิดได้จากไอคอนบนแถบด้านบน เมนูไม้กายสิทธิ์ (Extensions) หรือคำสั่ง <code>/shelf</code> (<code>/shelf janitor</code>, <code>/shelf ranking</code>, <code>/shelf trending</code>)</small>
+                <small class="cs_setnote">เปิดได้จากไอคอนบนแถบด้านบน เมนูไม้กายสิทธิ์ (Extensions) หรือคำสั่ง <code>/shelf</code> (<code>/shelf janitor</code>, <code>/shelf trending24</code>, <code>/shelf trending</code>, <code>/shelf popular</code>, <code>/shelf latest</code>)</small>
             </div>
         </div>
     </div>`);
@@ -735,7 +741,7 @@ function renderSettingsPanel() {
         out.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังทดสอบ…';
         goodRoute = null;
         try {
-            const json = await fetchJson(listUrl({ api: s.api, sort: s.sorts.ranking, page: 1, nsfw: s.nsfw }));
+            const json = await fetchJson(listUrl({ api: s.api, sort: s.sorts[ui.jtab] ?? s.sorts.popular, page: 1, nsfw: s.nsfw }));
             const r = normalizeList(json);
             out.innerHTML = r.items.length
                 ? `<span class="cs_good"><i class="fa-solid fa-check"></i> ใช้ได้ ผ่าน ${esc(goodRoute)} · ได้ ${r.items.length} บอท</span>`
@@ -757,7 +763,7 @@ function registerCommand() {
                 name: 'shelf',
                 aliases: ['janitor'],
                 callback: run,
-                helpString: 'เปิด Card Shelf — ใส่ต่อท้ายได้: datacat, janitor, ranking, trending, latest',
+                helpString: 'เปิด Card Shelf — ใส่ต่อท้ายได้: datacat, janitor, trending24, trending, popular, latest',
             }));
         } else {
             c.registerSlashCommand?.('shelf', run, ['janitor'], 'เปิด Card Shelf', true, true);

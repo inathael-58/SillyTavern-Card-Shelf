@@ -150,13 +150,23 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     background: var(--cs-card) !important;
 }
 .cs_jbar button.cs_on i { color: var(--cs-accent); }
-.cs_jbar .cs_spacer { flex: 1; }
+
 @media (max-width: 420px) {
     .cs_tab_janitor .cs_jbar { gap: 0; padding: 6px 6px; }
     .cs_jbar button { padding: 6px 9px !important; gap: 5px; }
 }
-.cs_jbar .cs_spin { opacity: 0.7; margin-right: 4px; }
-.cs_jbar .cs_spin[hidden] { display: none; }
+.cs_searchrow .cs_spin[hidden] { display: none; }
+.cs_searchrow button {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.75;
+}
+.cs_searchrow button:hover, .cs_searchrow button:focus-visible { opacity: 1; background: var(--cs-card) !important; }
 
 .cs_tab_janitor .cs_searchrow {
     flex: 0 0 auto;
@@ -177,7 +187,8 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     border: 0 !important;
     background: none !important;
     color: inherit;
-    font: 16px/1.2 inherit; /* 16px keeps iOS from zooming in on focus */
+    font-family: inherit;
+    font-size: 16px; /* 16px keeps iOS from zooming in on focus */
     outline: none;
     box-shadow: none !important;
 }
@@ -392,7 +403,7 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 .cs_settings .cs_row .menu_button { width: auto; }
 .cs_settings .cs_adv { margin: 10px 0; }
 .cs_settings .cs_adv summary { cursor: pointer; padding: 4px 0; }
-.cs_settings .cs_sorts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.cs_settings .cs_sorts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .cs_settings .cs_good { color: #4cc38a; }
 .cs_settings .cs_bad { color: #ff6369; }
 .cs_settings .cs_setnote ul { margin: 4px 0; padding-left: 18px; }

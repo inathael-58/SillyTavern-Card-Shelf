@@ -2,7 +2,7 @@
 
 หน้าต่างเดียว สองแท็บ: **Datacat** กับ **JanitorAI**
 
-แท็บ JanitorAI แสดงรายชื่อบอท **Ranking / Trending / ล่าสุด** ค้นหาได้ แตะบอทแล้วกด **ส่งไป Datacat** Card Shelf จะคัดลอกลิงก์บอทแล้วพาไปแท็บ Datacat วางลิงก์ Datacat จะสร้างการ์ดและนำเข้าให้ first mes ครบ ลอร์บุ๊คมาด้วย เพราะเป็นระบบนำเข้าของ Datacat เอง Card Shelf ไม่ได้แปลงอะไรเอง
+แท็บ JanitorAI แสดงรายชื่อบอท **Trending 24 ชั่วโมง / Trending สัปดาห์ / Popular / ล่าสุด** (ชุดเดียวกับหน้าแรกของ JanitorAI) ค้นหาได้ แตะบอทแล้วกด **ส่งไป Datacat** Card Shelf จะคัดลอกลิงก์บอทแล้วพาไปแท็บ Datacat วางลิงก์ Datacat จะสร้างการ์ดและนำเข้าให้ first mes ครบ ลอร์บุ๊คมาด้วย เพราะเป็นระบบนำเข้าของ Datacat เอง Card Shelf ไม่ได้แปลงอะไรเอง
 
 และมีตัวเลือก **หยุด/ซ่อนแมวเต้นของ Datacat** บนแถบด้านบน สำหรับคนที่จอกระตุก
 
@@ -24,7 +24,7 @@ https://github.com/inathael-58/SillyTavern-Card-Shelf
 ## ใช้
 
 1. เปิด Card Shelf จากไอคอนเข็มทิศ 🧭 บนแถบด้านบน เมนูไม้กายสิทธิ์ (Extensions) หรือคำสั่ง `/shelf`
-2. แท็บ **JanitorAI** เลือก **Ranking** / **Trending** / **ล่าสุด** หรือค้นหาชื่อบอท เลื่อนลงเพื่อโหลดเพิ่ม
+2. แท็บ **JanitorAI** เลือก **🔥 24 ชม.** / **🔥 สัปดาห์** / **🏆 Popular** / **🕒 ล่าสุด** หรือค้นหาชื่อบอท เลื่อนลงเพื่อโหลดเพิ่ม ปุ่ม ↗ ข้างช่องค้นหาเปิดหน้าเดียวกันบนเว็บ JanitorAI
 3. แตะบอทที่ชอบ แล้วกด **ส่งไป Datacat**
 4. Card Shelf คัดลอกลิงก์ให้แล้วสลับไปแท็บ **Datacat** วางลิงก์ลงในช่องของ Datacat แล้วนำเข้าตามปกติ
 5. นำเข้าเสร็จ Datacat เปิดแชทใหม่ให้ Card Shelf ปิดเองให้เห็นแชทเลย (ปิดตัวเลือกนี้ได้ในการตั้งค่า)
@@ -33,13 +33,19 @@ https://github.com/inathael-58/SillyTavern-Card-Shelf
 
 สลับแท็บไปมาได้ รายชื่อกับหน้า Datacat อยู่ที่เดิม ไม่โหลดใหม่
 
-คำสั่ง: `/shelf` · `/shelf datacat` · `/shelf janitor` · `/shelf ranking` · `/shelf trending` · `/shelf latest` (`/janitor` ก็ได้)
+คำสั่ง: `/shelf` · `/shelf datacat` · `/shelf janitor` · `/shelf trending24` · `/shelf trending` · `/shelf popular` · `/shelf latest` (`/janitor` ก็ได้)
 
 ### ถ้ารายชื่อไม่ขึ้น
 
 แท็บ JanitorAI จะบอกว่าติดอะไรพร้อมวิธีแก้ เช่น พร็อกซียังไม่เปิด หรือ Cloudflare ของ JanitorAI บล็อกเครื่องที่รัน SillyTavern ไปที่ **Extensions → Card Shelf → การเชื่อมต่อ JanitorAI → ทดสอบการเชื่อมต่อ** ได้ ระหว่างนั้นกด **เปิดบนเว็บ JanitorAI** แล้วคัดลอกลิงก์บอทจากเว็บ มาวางในแท็บ Datacat ได้เหมือนกัน
 
-ถ้า JanitorAI เปลี่ยนชื่อการเรียง (sort) ของ Ranking / Trending แก้ได้ในหน้าตั้งค่าเดียวกัน
+ถ้า JanitorAI เปลี่ยนชื่อการเรียง (sort) ของแต่ละแท็บ แก้ได้ในหน้าตั้งค่าเดียวกัน
+
+### Datacat ไม่จำการล็อกอิน
+
+การล็อกอินของ Datacat เก็บอยู่ในหน้า datacat.run ที่อยู่ในกรอบ (ไม่ได้เก็บใน SillyTavern หรือ Card Shelf) เบราว์เซอร์บางตัว โดยเฉพาะ Safari บน iPhone/iPad ไม่ให้เว็บที่อยู่ในกรอบของเว็บอื่นเก็บการล็อกอินไว้ (กันการติดตามข้ามเว็บ) เลยต้องล็อกอินใหม่ทุกครั้ง เป็นแบบเดียวกันไม่ว่าจะเปิด Datacat จาก Card Shelf หรือจากแมวของ Datacat เอง
+
+ถ้ายอมได้: **ตั้งค่า → แอป → Safari → ปิด “ป้องกันการติดตามข้ามไซต์” (Prevent Cross-Site Tracking)** แล้วล็อกอิน Datacat ใหม่อีกครั้ง การตั้งค่านี้มีผลกับทุกเว็บใน Safari
 
 ## แมว Datacat
 
