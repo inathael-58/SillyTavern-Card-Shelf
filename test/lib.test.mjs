@@ -45,7 +45,11 @@ test('list response is normalized whatever the field spelling', () => {
 });
 
 
-test('JanitorAI search page for opening in a new window', () => {
+test('JanitorAI page for opening in a new window', () => {
+    assert.equal(siteUrl({ sort: 'trending24' }), 'https://janitorai.com/?segment=trending24');
+    assert.equal(siteUrl({ sort: 'trending' }), 'https://janitorai.com/?segment=trending');
+    assert.equal(siteUrl({ sort: 'popular' }), 'https://janitorai.com/?segment=popular');
+    assert.equal(new URL(siteUrl({ sort: 'latest' })).pathname, '/search');
     const u = new URL(siteUrl({ sort: 'trending', search: 'elf', nsfw: false }));
     assert.equal(u.origin + u.pathname, 'https://janitorai.com/search');
     assert.equal(u.searchParams.get('sort'), 'trending');
