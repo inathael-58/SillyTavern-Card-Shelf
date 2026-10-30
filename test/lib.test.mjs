@@ -1,23 +1,74 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PAGES, dockBox, isJanitorUrl, janitorUrl } from '../lib.js';
+import { avatarUrl, dockBox, idFromLink, listUrl, normalizeList, routeOrder, routedUrl, shortCount, htmlToText, siteUrl } from '../lib.js';
 
-test('only https JanitorAI addresses are shown in the tab', () => {
-    assert.equal(isJanitorUrl('https://janitorai.com/characters/abc'), true);
-    assert.equal(isJanitorUrl('https://www.janitorai.com/'), true);
-    assert.equal(isJanitorUrl('http://janitorai.com/'), false);
-    assert.equal(isJanitorUrl('https://janitorai.com.evil.example/'), false);
-    assert.equal(isJanitorUrl('https://notjanitorai.com/'), false);
-    assert.equal(isJanitorUrl('javascript:alert(1)'), false);
-    assert.equal(isJanitorUrl(''), false);
+test('list URL carries page, mode, sort, search and tags', () => {
+    const u = new URL(listUrl({ sort: 'trending', page: 2, search: 'elf', nsfw: false, tags: ['Fantasy', 'Elf'] }));
+    assert.equal(u.origin + u.pathname, 'https://janitorai.com/hampter/characters');
+    assert.equal(u.searchParams.get('page'), '2');
+    assert.equal(u.searchParams.get('mode'), 'sfw');
+    assert.equal(u.searchParams.get('sort'), 'trending');
+    assert.equal(u.searchParams.get('search'), 'elf');
+    assert.deepEqual(u.searchParams.getAll('custom_tags'), ['Fantasy', 'Elf']);
+    assert.equal(new URL(listUrl({ page: 0 })).searchParams.get('page'), '1');
 });
 
-test('page addresses fall back when they are not JanitorAI', () => {
-    assert.equal(janitorUrl('janitorai.com/search?sort=popular'), 'https://janitorai.com/search?sort=popular');
-    assert.equal(janitorUrl('https://janitorai.com'), 'https://janitorai.com/');
-    assert.equal(janitorUrl('https://example.com/', 'X'), 'X');
-    assert.equal(janitorUrl('', DEFAULT_PAGES.ranking), DEFAULT_PAGES.ranking);
-    for (const url of Object.values(DEFAULT_PAGES)) assert.equal(isJanitorUrl(url), true);
+test('id is found inside JanitorAI and JannyAI links', () => {
+    const id = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0';
+    assert.equal(idFromLink(`https://janitorai.com/characters/${id}_character-alice`), id);
+    assert.equal(idFromLink(`https://jannyai.com/characters/${id.toUpperCase()}_character-alice`), id);
+    assert.equal(idFromLink('nothing here'), '');
+});
+
+test('list response is normalized whatever the field spelling', () => {
+    const r = normalizeList({
+        data: [
+            { id: 'a1', name: 'Alice', avatar: 'x.webp', tags: [{ id: 1, name: 'Romance' }], custom_tags: ['romance', 'Elf'], is_nsfw: true, total_chat: 12345, total_message: 99, creator_name: 'kit', description: '<p>Hi &amp; bye</p>' },
+            { id: 'b2', chat_name: 'Bob', stats: { chat: 7 } },
+            { name: 'no id' },
+        ],
+        total: 160, size: 80, page: 1,
+    });
+    assert.equal(r.items.length, 2);
+    assert.equal(r.pages, 2);
+    const [a, b] = r.items;
+    assert.equal(a.avatar, 'https://ella.janitorai.com/bot-avatars/x.webp?width=300');
+    assert.deepEqual(a.tags, ['Romance', 'Elf']);
+    assert.equal(a.nsfw, true);
+    assert.equal(a.chats, 12345);
+    assert.equal(a.description, 'Hi & bye');
+    assert.equal(a.url, 'https://janitorai.com/characters/a1');
+    assert.equal(b.name, 'Bob');
+    assert.equal(b.chats, 7);
+    assert.equal(normalizeList([{ id: 'z' }]).items[0].id, 'z');
+    assert.equal(avatarUrl('https://cdn.example/a.png'), 'https://cdn.example/a.png');
+});
+
+
+test('JanitorAI search page for opening in a new window', () => {
+    const u = new URL(siteUrl({ sort: 'trending', search: 'elf', nsfw: false }));
+    assert.equal(u.origin + u.pathname, 'https://janitorai.com/search');
+    assert.equal(u.searchParams.get('sort'), 'trending');
+    assert.equal(u.searchParams.get('mode'), 'sfw');
+    assert.equal(u.searchParams.get('search'), 'elf');
+});
+
+test('routes', () => {
+    assert.equal(routedUrl('https://a.b/c?d=1&e=2', 'st'), '/proxy/https%3A%2F%2Fa.b%2Fc%3Fd%3D1%26e%3D2');
+    assert.equal(routedUrl('https://a.b/c', 'custom', 'https://p.x/?url={url}'), 'https://p.x/?url=https%3A%2F%2Fa.b%2Fc');
+    assert.equal(routedUrl('https://a.b/c', 'custom', 'https://p.x/'), 'https://p.x/https%3A%2F%2Fa.b%2Fc');
+    assert.equal(routedUrl('https://a.b/c', 'custom', ''), '');
+    assert.deepEqual(routeOrder('auto'), ['st', 'direct']);
+    assert.deepEqual(routeOrder('auto', 'https://p/'), ['st', 'custom', 'direct']);
+    assert.deepEqual(routeOrder('custom'), ['st']);
+});
+
+test('text helpers', () => {
+    assert.equal(htmlToText('a<br>b<p>c</p><script>x</script>&#3588;'), 'a\nb\nc\nค');
+    assert.equal(shortCount(999), '999');
+    assert.equal(shortCount(1234), '1.2k');
+    assert.equal(shortCount(25000), '25k');
+    assert.equal(shortCount(3_400_000), '3.4M');
 });
 
 test('Datacat window box stays on screen', () => {

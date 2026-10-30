@@ -1,19 +1,24 @@
 /*
  * Card Shelf — SillyTavern UI extension
  *
- * One window, two tabs: Datacat and JanitorAI. Look around JanitorAI (Ranking, Trending),
- * copy a bot's link, switch to the Datacat tab and let Datacat turn it into a card and
- * import it — Datacat's own import, so first messages and lorebooks come out right.
- * Also lets you freeze or hide Datacat Browser's dancing top-bar cat.
+ * One window, two tabs: Datacat and JanitorAI. The JanitorAI tab lists JanitorAI's Ranking,
+ * Trending and Latest bots; tap one, "ส่งไป Datacat" copies its link and switches to the
+ * Datacat tab, where Datacat turns it into a card and imports it — Datacat's own import,
+ * so first messages and lorebooks come out right. Also lets you freeze or hide Datacat
+ * Browser's dancing top-bar cat.
  *
  * The Datacat tab is Datacat Browser's own window (its iframe and import bridge), placed
  * over the Card Shelf window; Card Shelf never talks to datacat.run itself.
+ * JanitorAI doesn't let other sites show its pages in a frame, so its list is read from
+ * JanitorAI and drawn here instead.
  */
 
-import { DEFAULT_PAGES, dockBox, janitorUrl } from './lib.js';
+import {
+    DEFAULT_SORTS, dockBox, JANITOR_API, listUrl, normalizeList, routedUrl, routeOrder, shortCount, siteUrl,
+} from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.0.0'; // keep in sync with manifest.json
+const VERSION = '2.1.0'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -21,9 +26,20 @@ const DEFAULTS = Object.freeze({
     datacatCat: 'animated', // animated | still | hidden — Datacat Browser's top-bar cat
     topbar: true,           // our own icon in the top bar (a still icon, never animated)
     tab: 'datacat',         // datacat | janitor — the tab Card Shelf opens on
+    jtab: 'ranking',        // ranking | trending | latest — the JanitorAI list shown
     closeAfterImport: true, // close Card Shelf when Datacat opens the imported chat
-    pages: DEFAULT_PAGES,   // JanitorAI tab buttons: home, ranking, trending
+    nsfw: true,             // include NSFW bots in the JanitorAI lists
+    route: 'auto',          // auto | st | direct | custom — how JanitorAI is reached
+    proxy: '',              // custom proxy, {url} = the encoded JanitorAI address
+    api: JANITOR_API,
+    sorts: DEFAULT_SORTS,
 });
+
+const LISTS = [
+    ['ranking', 'fa-trophy', 'Ranking'],
+    ['trending', 'fa-fire', 'Trending'],
+    ['latest', 'fa-clock', 'ล่าสุด'],
+];
 
 const ctx = () => SillyTavern.getContext();
 
@@ -34,12 +50,17 @@ function settings() {
     for (const [k, v] of Object.entries(DEFAULTS)) {
         if (s[k] === undefined) s[k] = (v && typeof v === 'object') ? { ...v } : v;
     }
-    for (const [k, v] of Object.entries(DEFAULT_PAGES)) s.pages[k] = janitorUrl(s.pages[k], v);
+    for (const [k, v] of Object.entries(DEFAULT_SORTS)) if (!s.sorts[k]) s.sorts[k] = v;
+    delete s.pages; // 2.0's frame buttons
     if (s.tab !== 'janitor') s.tab = 'datacat';
+    if (!LISTS.some(l => l[0] === s.jtab)) s.jtab = 'ranking';
     return s;
 }
 const saveSettings = () => ctx().saveSettingsDebounced();
 const datacatReady = () => typeof window.datacatOpenBrowser === 'function';
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const errText = e => String(e?.message ?? e);
 
 // ---------------------------------------------------------------- Datacat's cat
 //
@@ -101,6 +122,95 @@ function watchDatacat() {
     for (const ms of [500, 2000, 6000]) setTimeout(again, ms);
 }
 
+// ---------------------------------------------------------------- reaching JanitorAI
+//
+// JanitorAI doesn't allow other sites to read its API from the browser (CORS), so lists go
+// through SillyTavern's own CORS proxy (/proxy/, `enableCorsProxy: true` in config.yaml), or
+// a proxy you choose. The route that worked is tried first next time.
+
+let goodRoute = null;
+
+class ReachError extends Error {
+    constructor(attempts) {
+        super(attempts.map(a => `${a.route}: ${a.status || ''} ${a.text}`.trim()).join(' · ') || 'no route');
+        this.attempts = attempts;
+    }
+}
+
+async function fetchJson(url) {
+    const s = settings();
+    let order = routeOrder(s.route, s.proxy);
+    if (goodRoute && order.includes(goodRoute)) order = [goodRoute, ...order.filter(r => r !== goodRoute)];
+    const attempts = [];
+    for (const route of order) {
+        const target = routedUrl(url, route, s.proxy);
+        if (!target) continue;
+        try {
+            const res = await fetch(target, { headers: { Accept: 'application/json' }, cache: 'no-store', referrerPolicy: 'no-referrer' });
+            const text = await res.text().catch(() => '');
+            if (!res.ok) {
+                attempts.push({ route, status: res.status, text: text.replace(/\s+/g, ' ').slice(0, 160) });
+                continue;
+            }
+            try {
+                const body = JSON.parse(text);
+                goodRoute = route;
+                return body;
+            } catch {
+                attempts.push({ route, status: res.status, text: /cloudflare|challenge|<html/i.test(text) ? 'cloudflare' : 'not json' });
+            }
+        } catch (e) {
+            attempts.push({ route, status: 0, text: errText(e) });
+        }
+    }
+    throw new ReachError(attempts);
+}
+
+/** What went wrong, in words, with what to do about it. */
+function explainReach(err) {
+    const tips = [];
+    for (const a of err?.attempts ?? []) {
+        if (a.route === 'st' && a.status === 404 && /CORS proxy is disabled/i.test(a.text)) {
+            tips.push('พร็อกซีของ SillyTavern ยังปิดอยู่ — เปิดไฟล์ <code>config.yaml</code> ตั้ง <code>enableCorsProxy: true</code> แล้วรีสตาร์ท SillyTavern');
+        } else if (a.status === 403 || a.status === 503 || a.text === 'cloudflare') {
+            tips.push(`JanitorAI (Cloudflare) ไม่ยอมให้เครื่องที่รัน SillyTavern อ่าน (${esc(a.route)} ${a.status || ''}) — ลองใหม่ภายหลัง หรือใช้พร็อกซีอื่นในการตั้งค่า`);
+        } else if (a.route === 'direct' && a.status === 0) {
+            tips.push('เบราว์เซอร์บล็อกการอ่าน JanitorAI ตรง ๆ (CORS) — ต้องผ่านพร็อกซี');
+        } else if (a.status === 429) {
+            tips.push('JanitorAI ขอให้ช้าลง (429) — รอสักครู่แล้วลองใหม่');
+        } else {
+            tips.push(`${esc(a.route)}: ${esc(a.status || '')} ${esc(a.text)}`);
+        }
+    }
+    return [...new Set(tips)];
+}
+
+// ---------------------------------------------------------------- copying a link
+//
+// The clipboard API only exists on https or localhost; SillyTavern opened as
+// http://192.168.x.x on a phone falls back to the old copy command.
+
+async function copyText(text) {
+    try {
+        if (window.isSecureContext && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch { /* fall back below */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px;';
+    document.body.append(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+    return ok;
+}
+
 // ---------------------------------------------------------------- the window
 
 const ui = {
@@ -109,7 +219,15 @@ const ui = {
     tab: 'datacat',
     docked: false,
     resize: null,
+    jtab: 'ranking',
+    search: '',
+    lists: {},      // listKey() → { tab, search, items, page, pages, done, loading, error }
+    observer: null,
+    noteTimer: null,
 };
+
+const listKey = () => JSON.stringify([ui.jtab, ui.search, settings().nsfw, settings().api, settings().sorts[ui.jtab]]);
+const allItems = () => Object.values(ui.lists).flatMap(l => l.items);
 
 function buildWindow() {
     const root = document.createElement('div');
@@ -126,15 +244,18 @@ function buildWindow() {
                 </nav>
                 <button class="cs_tool cs_close" title="ปิด (Esc)" aria-label="ปิด"><i class="fa-solid fa-xmark"></i></button>
             </header>
+            <div class="cs_note" hidden></div>
             <div class="cs_jbar">
-                <button data-page="ranking"><i class="fa-solid fa-trophy"></i><span>Ranking</span></button>
-                <button data-page="trending"><i class="fa-solid fa-fire"></i><span>Trending</span></button>
-                <button data-page="home"><i class="fa-solid fa-house"></i><span>หน้าแรก</span></button>
+                ${LISTS.map(([id, icon, label]) => `<button data-list="${id}"><i class="fa-solid ${icon}"></i><span>${label}</span></button>`).join('')}
                 <span class="cs_spacer"></span>
+                <i class="fa-solid fa-circle-notch fa-spin cs_spin" hidden></i>
                 <button class="cs_jreload" title="โหลดใหม่"><i class="fa-solid fa-rotate"></i></button>
-                <button class="cs_jout" title="เปิด JanitorAI ในหน้าต่างใหม่"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
+                <button class="cs_jout" title="เปิดหน้านี้บนเว็บ JanitorAI"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
             </div>
-            <div class="cs_jhint">กดค้าง (หรือคลิกขวา) ที่บอท → <b>คัดลอกลิงก์</b> แล้วไปแท็บ <b>Datacat</b> วางลิงก์ Datacat จะสร้างการ์ดและนำเข้าให้ · หน้าว่างหรือล็อกอินไม่ได้? กด <i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดในหน้าต่างใหม่</div>
+            <form class="cs_searchrow">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="search" class="cs_search" placeholder="ค้นหาบอทบน JanitorAI" autocomplete="off" spellcheck="false" enterkeyhint="search">
+            </form>
             <div class="cs_body">
                 <div class="cs_dock"></div>
                 <div class="cs_nodc" hidden>
@@ -143,6 +264,8 @@ function buildWindow() {
                     <span>แท็บนี้ใช้หน้าต่างของ Datacat ในการสร้างการ์ดและนำเข้า ติดตั้งจาก Extensions → Install extension แล้ววาง</span>
                     <code>${DATACAT_REPO}</code>
                 </div>
+                <div class="cs_list"></div>
+                <div class="cs_sheet" hidden></div>
             </div>
         </section>`;
     document.body.append(root);
@@ -155,35 +278,32 @@ function buildWindow() {
         if (b) showTab(b.dataset.tab, { remember: true });
     });
     q('.cs_jbar').addEventListener('click', e => {
-        const b = e.target.closest('button[data-page]');
-        if (b) goJanitor(settings().pages[b.dataset.page]);
+        const b = e.target.closest('button[data-list]');
+        if (!b) return;
+        ui.jtab = settings().jtab = b.dataset.list;
+        saveSettings();
+        renderList();
     });
-    q('.cs_jreload').addEventListener('click', () => {
-        const f = janitorFrame();
-        f.src = f.src || settings().pages.ranking;
+    q('.cs_jreload').addEventListener('click', () => { delete ui.lists[listKey()]; goodRoute = null; renderList(); });
+    q('.cs_jout').addEventListener('click', () => {
+        const s = settings();
+        window.open(siteUrl({ sort: s.sorts[ui.jtab], search: ui.search, nsfw: s.nsfw }), '_blank', 'noopener');
     });
-    q('.cs_jout').addEventListener('click', () => window.open(janitorFrame(false)?.src || settings().pages.ranking, '_blank', 'noopener'));
+    q('.cs_searchrow').addEventListener('submit', e => {
+        e.preventDefault();
+        ui.search = q('.cs_search').value.trim();
+        q('.cs_search').blur();
+        renderList();
+    });
+    q('.cs_search').addEventListener('search', () => {
+        if (q('.cs_search').value === '' && ui.search) { ui.search = ''; renderList(); }
+    });
+    q('.cs_list').addEventListener('click', e => {
+        const card = e.target.closest('.cs_card');
+        const item = card && allItems().find(i => i.id === card.dataset.id);
+        if (item) openSheet(item);
+    });
     return root;
-}
-
-/** The JanitorAI iframe, made the first time the tab is shown and kept afterwards. */
-function janitorFrame(create = true) {
-    let f = ui.root?.querySelector('.cs_jframe');
-    if (!f && create && ui.root) {
-        f = document.createElement('iframe');
-        f.className = 'cs_jframe';
-        f.title = 'JanitorAI';
-        f.referrerPolicy = 'no-referrer';
-        f.setAttribute('allow', 'clipboard-write; clipboard-read');
-        f.src = settings().pages.ranking;
-        ui.root.querySelector('.cs_body').append(f);
-    }
-    return f;
-}
-
-function goJanitor(url) {
-    const f = janitorFrame();
-    if (f) f.src = janitorUrl(url, settings().pages.home);
 }
 
 function openShelf(tab) {
@@ -193,11 +313,11 @@ function openShelf(tab) {
     ui.open = true;
     document.addEventListener('keydown', onKey, true);
     requestAnimationFrame(() => ui.root?.classList.add('cs_in'));
-    const page = { ranking: 'ranking', trending: 'trending', home: 'home' }[tab];
-    if (page) {
+    if (LISTS.some(l => l[0] === tab)) {
+        ui.jtab = s.jtab = tab;
         showTab('janitor');
-        goJanitor(s.pages[page]);
     } else {
+        ui.jtab = s.jtab;
         showTab(tab === 'janitor' || tab === 'datacat' ? tab : s.tab);
     }
 }
@@ -206,15 +326,16 @@ function closeShelf() {
     if (!ui.open) return;
     ui.open = false;
     undockDatacat();
+    closeSheet();
     document.removeEventListener('keydown', onKey, true);
     ui.root.classList.remove('cs_in');
-    ui.root.hidden = true; // kept, so JanitorAI stays where you left it
+    ui.root.hidden = true; // kept, so the list stays where you left it
 }
 
 function onKey(e) {
     if (e.key !== 'Escape' || !ui.open) return;
     e.stopPropagation();
-    closeShelf();
+    if (!ui.root.querySelector('.cs_sheet').hidden) closeSheet(); else closeShelf();
 }
 
 function showTab(tab, { remember = false } = {}) {
@@ -226,10 +347,201 @@ function showTab(tab, { remember = false } = {}) {
     root.classList.toggle('cs_tab_datacat', ui.tab === 'datacat');
     if (ui.tab === 'janitor') {
         undockDatacat();
-        janitorFrame();
+        renderList({ keep: true });
     } else {
+        closeSheet();
         dockDatacat();
     }
+}
+
+/** A short message under the tabs (never covered by Datacat's window). */
+function note(html, ms = 6000) {
+    const el = ui.root?.querySelector('.cs_note');
+    if (!el) return;
+    el.innerHTML = html;
+    el.hidden = false;
+    clearTimeout(ui.noteTimer);
+    ui.noteTimer = setTimeout(() => {
+        el.hidden = true;
+        placeDock();
+    }, ms);
+    placeDock();
+}
+
+function setBusy(on) {
+    const spin = ui.root?.querySelector('.cs_spin');
+    if (spin) spin.hidden = !on;
+}
+
+// ---------------------------------------------------------------- JanitorAI list
+
+function renderList({ keep = false } = {}) {
+    if (!ui.root) return;
+    const q = sel => ui.root.querySelector(sel);
+    for (const b of ui.root.querySelectorAll('.cs_jbar button[data-list]')) b.classList.toggle('cs_on', b.dataset.list === ui.jtab);
+    q('.cs_search').value = ui.search;
+    const box = q('.cs_list');
+    const key = listKey();
+    // Coming back to the tab: leave the list (and the scroll position) as it was.
+    if (keep && box.dataset.key === key && box.childElementCount) return;
+    closeSheet();
+    ui.observer?.disconnect();
+    box.dataset.key = key;
+    box.scrollTop = 0;
+    const list = ui.lists[key] ??= { tab: ui.jtab, search: ui.search, items: [], page: 0, pages: 0, done: false, loading: false, error: null };
+    box.innerHTML = `
+        ${ui.search ? `<div class="cs_listnote">ผลค้นหา “${esc(ui.search)}”</div>` : ''}
+        <div class="cs_grid" role="list"></div>
+        <div class="cs_more"></div>`;
+    appendCards(box.querySelector('.cs_grid'), list.items, 0, list.tab);
+    updateMore(list);
+    ui.observer = new IntersectionObserver(entries => {
+        if (entries.some(e => e.isIntersecting)) loadMore(key);
+    }, { root: box, rootMargin: '600px 0px' });
+    ui.observer.observe(box.querySelector('.cs_more'));
+    if (!list.items.length && !list.loading && !list.error) loadMore(key);
+}
+
+async function loadMore(key) {
+    const list = ui.lists[key];
+    if (!list || list.loading || list.done || list.error) return;
+    const s = settings();
+    list.loading = true;
+    setBusy(true);
+    refreshMore(key);
+    try {
+        const page = list.page + 1;
+        const json = await fetchJson(listUrl({ api: s.api, sort: s.sorts[list.tab], page, search: list.search, nsfw: s.nsfw }));
+        const r = normalizeList(json, page);
+        const seen = new Set(list.items.map(i => i.id));
+        const fresh = r.items.filter(i => !seen.has(i.id));
+        const start = list.items.length;
+        list.items.push(...fresh);
+        list.page = page;
+        list.pages = r.pages;
+        list.done = !fresh.length || (r.pages && page >= r.pages);
+        if (isShown(key)) appendCards(ui.root.querySelector('.cs_grid'), fresh, start, list.tab);
+    } catch (e) {
+        console.warn(LOG, 'list', e);
+        list.error = e;
+    } finally {
+        list.loading = false;
+        setBusy(false);
+        refreshMore(key);
+    }
+}
+
+const isShown = key => ui.root?.querySelector('.cs_list')?.dataset.key === key;
+
+function refreshMore(key) {
+    if (!isShown(key)) return;
+    updateMore(ui.lists[key]);
+    // The observer only reports changes: if the end of the list is still on screen after a
+    // page arrived, observe again so it reports "visible" once more and the next page loads.
+    const more = ui.root.querySelector('.cs_more');
+    if (more && ui.observer && !ui.lists[key].loading) { ui.observer.unobserve(more); ui.observer.observe(more); }
+}
+
+function updateMore(list) {
+    const more = ui.root?.querySelector('.cs_more');
+    if (!more) return;
+    if (list.error) {
+        const tips = list.error instanceof ReachError ? explainReach(list.error) : [esc(errText(list.error))];
+        more.innerHTML = `
+            <div class="cs_error">
+                <b><i class="fa-solid fa-triangle-exclamation"></i> อ่านรายชื่อจาก JanitorAI ไม่ได้</b>
+                <ul>${tips.map(t => `<li>${t}</li>`).join('')}</ul>
+                <div class="cs_row">
+                    <button class="menu_button cs_retry"><i class="fa-solid fa-rotate"></i> ลองใหม่</button>
+                    <button class="menu_button cs_opensite"><i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดบนเว็บ JanitorAI</button>
+                </div>
+                <small>เปิดบนเว็บแล้วคัดลอกลิงก์บอทจากตรงนั้น มาวางในแท็บ Datacat ได้เหมือนกัน</small>
+            </div>`;
+        more.querySelector('.cs_retry').addEventListener('click', () => { list.error = null; goodRoute = null; updateMore(list); loadMore(listKey()); });
+        more.querySelector('.cs_opensite').addEventListener('click', () => ui.root.querySelector('.cs_jout').click());
+    } else if (list.loading) {
+        more.innerHTML = '<div class="cs_loading"><i class="fa-solid fa-circle-notch fa-spin"></i> กำลังโหลด…</div>';
+    } else if (list.done) {
+        more.innerHTML = list.items.length ? '<div class="cs_end">หมดแล้ว</div>' : '<div class="cs_end">ไม่พบบอท</div>';
+    } else {
+        more.innerHTML = '<button class="menu_button cs_loadmore">โหลดเพิ่ม</button>';
+        more.querySelector('.cs_loadmore').addEventListener('click', () => loadMore(listKey()));
+    }
+}
+
+function appendCards(grid, items, start, tab) {
+    if (!grid || !items.length) return;
+    const ranked = tab !== 'latest' && !ui.search;
+    grid.insertAdjacentHTML('beforeend', items.map((it, i) => `
+        <button class="cs_card" role="listitem" data-id="${esc(it.id)}">
+            <span class="cs_cover">
+                ${it.avatar ? `<img src="${esc(it.avatar)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : '<i class="fa-solid fa-user"></i>'}
+                ${ranked ? `<span class="cs_rank">${start + i + 1}</span>` : ''}
+                ${it.nsfw ? '<span class="cs_nsfw">NSFW</span>' : ''}
+            </span>
+            <span class="cs_cname">${esc(it.name)}</span>
+            <span class="cs_meta">${it.chats ? `<i class="fa-solid fa-comments"></i> ${shortCount(it.chats)}` : ''}${it.creator ? ` · @${esc(it.creator)}` : ''}</span>
+            <span class="cs_tags">${it.tags.slice(0, 3).map(t => `<span>${esc(t)}</span>`).join('')}</span>
+        </button>`).join(''));
+}
+
+// ---------------------------------------------------------------- bot sheet
+
+function openSheet(item) {
+    const sheet = ui.root?.querySelector('.cs_sheet');
+    if (!sheet) return;
+    sheet.hidden = false;
+    sheet.innerHTML = `
+        <div class="cs_sheetbar">
+            <button class="cs_tool cs_back" title="กลับ"><i class="fa-solid fa-arrow-left"></i></button>
+            <b>${esc(item.name)}</b>
+        </div>
+        <div class="cs_sheetbody">
+            <div class="cs_hero">
+                ${item.avatar ? `<img src="${esc(item.avatar.replace(/\?width=\d+$/, '?width=600'))}" alt="" decoding="async" referrerpolicy="no-referrer">` : ''}
+                <div class="cs_herotext">
+                    <h3>${esc(item.name)}</h3>
+                    ${item.creator ? `<div class="cs_by">โดย @${esc(item.creator)}</div>` : ''}
+                    <div class="cs_stats">
+                        ${item.chats ? `<span><i class="fa-solid fa-comments"></i> ${shortCount(item.chats)} แชท</span>` : ''}
+                        ${item.messages ? `<span><i class="fa-solid fa-message"></i> ${shortCount(item.messages)} ข้อความ</span>` : ''}
+                        ${item.nsfw ? '<span class="cs_nsfw">NSFW</span>' : ''}
+                    </div>
+                    <div class="cs_tags cs_tagsfull">${item.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>
+                </div>
+            </div>
+            <div class="cs_actions">
+                <button class="menu_button cs_send"><i class="fa-solid fa-cat"></i> ส่งไป Datacat</button>
+                <button class="menu_button cs_copy"><i class="fa-regular fa-copy"></i> คัดลอกลิงก์</button>
+                <button class="menu_button cs_openpage"><i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดใน JanitorAI</button>
+            </div>
+            <label class="cs_linkrow" hidden>คัดลอกเองจากช่องนี้ได้<input type="text" class="text_pole cs_link" readonly value="${esc(item.url)}"></label>
+            ${item.description ? `<div class="cs_desc">${esc(item.description)}</div>` : ''}
+        </div>`;
+    const q = sel => sheet.querySelector(sel);
+    const showLink = () => {
+        q('.cs_linkrow').hidden = false;
+        q('.cs_link').focus();
+        q('.cs_link').select();
+    };
+    q('.cs_back').addEventListener('click', closeSheet);
+    q('.cs_openpage').addEventListener('click', () => window.open(item.url, '_blank', 'noopener'));
+    q('.cs_copy').addEventListener('click', async () => {
+        if (await copyText(item.url)) note(`<i class="fa-solid fa-check"></i> คัดลอกลิงก์ ${esc(item.name)} แล้ว`, 3000);
+        else showLink();
+    });
+    q('.cs_send').addEventListener('click', async () => {
+        if (!(await copyText(item.url))) { showLink(); return; }
+        showTab('datacat', { remember: false });
+        note(`<i class="fa-regular fa-clipboard"></i> คัดลอกลิงก์ <b>${esc(item.name)}</b> แล้ว — วางลงในช่องของ Datacat ได้เลย`);
+    });
+}
+
+function closeSheet() {
+    const sheet = ui.root?.querySelector('.cs_sheet');
+    if (!sheet || sheet.hidden) return;
+    sheet.hidden = true;
+    sheet.innerHTML = '';
 }
 
 // ---------------------------------------------------------------- Datacat inside the window
@@ -344,6 +656,7 @@ function renderSettingsPanel() {
                     </select>
                 </label>
                 <label class="checkbox_label"><input type="checkbox" id="cs_set_close"> ปิด Card Shelf เมื่อ Datacat นำเข้าเสร็จและเปิดแชทแล้ว</label>
+                <label class="checkbox_label"><input type="checkbox" id="cs_set_nsfw"> แสดงบอท NSFW ในรายชื่อ JanitorAI</label>
                 <small id="cs_set_nodc" class="cs_setnote cs_warn" hidden>ยังไม่พบ Datacat SillyTavern Browser — แท็บ Datacat ต้องใช้ส่วนขยายนี้: <code>${DATACAT_REPO}</code></small>
 
                 <h4 class="cs_sethead">แมว Datacat บนแถบด้านบน</h4>
@@ -355,12 +668,27 @@ function renderSettingsPanel() {
                 <small class="cs_setnote">ถ้าจอกระตุกตอนบอทตอบ ลอง “หยุดนิ่ง” หรือ “ซ่อน”</small>
 
                 <details class="cs_adv">
-                    <summary>ปุ่มในแท็บ JanitorAI</summary>
-                    <label class="cs_field">Ranking<input type="text" class="text_pole" data-page="ranking"></label>
-                    <label class="cs_field">Trending<input type="text" class="text_pole" data-page="trending"></label>
-                    <label class="cs_field">หน้าแรก<input type="text" class="text_pole" data-page="home"></label>
-                    <div class="cs_row"><div id="cs_set_reset" class="menu_button">ค่าเริ่มต้น</div></div>
-                    <small class="cs_setnote">ใส่ได้เฉพาะลิงก์ janitorai.com · ถ้า JanitorAI ย้ายหน้า Ranking หรือ Trending ไปที่อื่น เปิดหน้านั้นในเบราว์เซอร์แล้วคัดลอกลิงก์มาวางตรงนี้</small>
+                    <summary>การเชื่อมต่อ JanitorAI</summary>
+                    <small class="cs_setnote">รายชื่อในแท็บ JanitorAI อ่านผ่านพร็อกซีของ SillyTavern: ใน <code>config.yaml</code> ตั้ง <code>enableCorsProxy: true</code> แล้วรีสตาร์ท SillyTavern</small>
+                    <label class="cs_field">เส้นทาง
+                        <select id="cs_set_route" class="text_pole">
+                            <option value="auto">อัตโนมัติ (พร็อกซี ST → พร็อกซีที่ตั้งไว้ → ตรง)</option>
+                            <option value="st">พร็อกซีของ SillyTavern (/proxy/)</option>
+                            <option value="custom">พร็อกซีที่ตั้งเอง</option>
+                            <option value="direct">ตรงจากเบราว์เซอร์</option>
+                        </select>
+                    </label>
+                    <label class="cs_field">พร็อกซีที่ตั้งเอง <small>(<code>{url}</code> = ที่อยู่ JanitorAI · พร็อกซีนั้นจะเห็นว่าคุณดูหน้าไหน)</small>
+                        <input type="text" id="cs_set_proxy" class="text_pole" placeholder="https://your-proxy.example/?url={url}">
+                    </label>
+                    <label class="cs_field">API<input type="text" id="cs_set_api" class="text_pole"></label>
+                    <div class="cs_sorts">
+                        <label class="cs_field">Ranking sort<input type="text" class="text_pole" data-sort="ranking"></label>
+                        <label class="cs_field">Trending sort<input type="text" class="text_pole" data-sort="trending"></label>
+                        <label class="cs_field">ล่าสุด sort<input type="text" class="text_pole" data-sort="latest"></label>
+                    </div>
+                    <div class="cs_row"><div id="cs_set_test" class="menu_button"><i class="fa-solid fa-plug"></i> ทดสอบการเชื่อมต่อ</div><div id="cs_set_reset" class="menu_button">ค่าเริ่มต้น</div></div>
+                    <div id="cs_set_testout" class="cs_setnote"></div>
                 </details>
                 <small class="cs_setnote">เปิดได้จากไอคอนบนแถบด้านบน เมนูไม้กายสิทธิ์ (Extensions) หรือคำสั่ง <code>/shelf</code> (<code>/shelf janitor</code>, <code>/shelf ranking</code>, <code>/shelf trending</code>)</small>
             </div>
@@ -374,19 +702,48 @@ function renderSettingsPanel() {
     $('cs_set_tab').addEventListener('change', e => { s.tab = e.target.value; saveSettings(); });
     $('cs_set_close').checked = !!s.closeAfterImport;
     $('cs_set_close').addEventListener('change', e => { s.closeAfterImport = e.target.checked; saveSettings(); });
+    $('cs_set_nsfw').checked = !!s.nsfw;
+    $('cs_set_nsfw').addEventListener('change', e => { s.nsfw = e.target.checked; saveSettings(); });
     for (const r of document.querySelectorAll('input[name="cs_datacatCat"]')) {
         r.addEventListener('change', e => { if (e.target.checked) { s.datacatCat = e.target.value; saveSettings(); applyDatacatCat(); } });
     }
-    const fillPages = () => { for (const inp of document.querySelectorAll('#cs_settings [data-page]')) inp.value = s.pages[inp.dataset.page]; };
-    fillPages();
-    for (const inp of document.querySelectorAll('#cs_settings [data-page]')) {
+    const fillAdv = () => {
+        $('cs_set_route').value = s.route;
+        $('cs_set_proxy').value = s.proxy;
+        $('cs_set_api').value = s.api;
+        for (const inp of document.querySelectorAll('#cs_settings [data-sort]')) inp.value = s.sorts[inp.dataset.sort];
+    };
+    fillAdv();
+    $('cs_set_route').addEventListener('change', e => { s.route = e.target.value; goodRoute = null; saveSettings(); });
+    $('cs_set_proxy').addEventListener('change', e => { s.proxy = e.target.value.trim(); goodRoute = null; saveSettings(); });
+    $('cs_set_api').addEventListener('change', e => { s.api = e.target.value.trim().replace(/\/+$/, '') || JANITOR_API; e.target.value = s.api; saveSettings(); });
+    for (const inp of document.querySelectorAll('#cs_settings [data-sort]')) {
         inp.addEventListener('change', e => {
-            s.pages[inp.dataset.page] = janitorUrl(e.target.value, DEFAULT_PAGES[inp.dataset.page]);
-            e.target.value = s.pages[inp.dataset.page];
+            s.sorts[inp.dataset.sort] = e.target.value.trim() || DEFAULT_SORTS[inp.dataset.sort];
+            e.target.value = s.sorts[inp.dataset.sort];
             saveSettings();
         });
     }
-    $('cs_set_reset').addEventListener('click', () => { s.pages = { ...DEFAULT_PAGES }; saveSettings(); fillPages(); });
+    $('cs_set_reset').addEventListener('click', () => {
+        Object.assign(s, { route: DEFAULTS.route, proxy: '', api: JANITOR_API, sorts: { ...DEFAULT_SORTS } });
+        goodRoute = null;
+        saveSettings();
+        fillAdv();
+    });
+    $('cs_set_test').addEventListener('click', async () => {
+        const out = $('cs_set_testout');
+        out.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังทดสอบ…';
+        goodRoute = null;
+        try {
+            const json = await fetchJson(listUrl({ api: s.api, sort: s.sorts.ranking, page: 1, nsfw: s.nsfw }));
+            const r = normalizeList(json);
+            out.innerHTML = r.items.length
+                ? `<span class="cs_good"><i class="fa-solid fa-check"></i> ใช้ได้ ผ่าน ${esc(goodRoute)} · ได้ ${r.items.length} บอท</span>`
+                : `ต่อได้ผ่าน ${esc(goodRoute)} แต่ไม่พบรายชื่อบอทในคำตอบ: <code>${esc(JSON.stringify(json).slice(0, 200))}</code>`;
+        } catch (e) {
+            out.innerHTML = `<span class="cs_bad">ต่อไม่ได้</span><ul>${(e instanceof ReachError ? explainReach(e) : [esc(errText(e))]).map(t => `<li>${t}</li>`).join('')}</ul>`;
+        }
+    });
     // Datacat loads with its own order; check once things have settled.
     setTimeout(() => { $('cs_set_nodc').hidden = datacatReady(); }, 3000);
 }
@@ -400,7 +757,7 @@ function registerCommand() {
                 name: 'shelf',
                 aliases: ['janitor'],
                 callback: run,
-                helpString: 'เปิด Card Shelf — ใส่ต่อท้ายได้: datacat, janitor, ranking, trending',
+                helpString: 'เปิด Card Shelf — ใส่ต่อท้ายได้: datacat, janitor, ranking, trending, latest',
             }));
         } else {
             c.registerSlashCommand?.('shelf', run, ['janitor'], 'เปิด Card Shelf', true, true);
