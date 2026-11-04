@@ -18,7 +18,7 @@ import {
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.2.0'; // keep in sync with manifest.json
+const VERSION = '2.2.1'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -655,6 +655,7 @@ function renderSettingsPanel() {
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
+                ${versionLineHtml()}
                 <div class="cs_row"><div id="cs_set_open" class="menu_button"><i class="fa-regular fa-compass"></i> เปิด Card Shelf</div></div>
                 <label class="checkbox_label"><input type="checkbox" id="cs_set_topbar"> ไอคอนเข็มทิศบนแถบด้านบน (ไอคอนนิ่ง ไม่มีแอนิเมชัน)</label>
                 <label class="cs_field">เปิดมาที่แท็บ
@@ -771,12 +772,83 @@ function registerCommand() {
     } catch (e) { console.warn(LOG, 'slash command', e); }
 }
 
+// ---------------------------------------------------------------- version check + hard refresh
+//
+// SillyTavern loads extension files by a fixed URL, and browsers (and home-screen web apps on
+// iOS, which rarely reload for real) keep the old files cached after "Update". Compare with the
+// manifest on the server; if it is newer, say so, and offer to refetch every file and reload.
+
+const BASE_URL = new URL('.', import.meta.url);
+/** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
+const FILES = ['index.js', 'lib.js', 'style.css', 'manifest.json'];
+let remoteVersion = '';
+let versionCheckedAt = 0;
+let versionToastShown = false;
+const newerVersion = (a, b) => {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+    return false;
+};
+async function fetchRemoteVersion() {
+    try {
+        const res = await fetch(new URL('manifest.json', BASE_URL), { cache: 'no-store' });
+        if (!res.ok) return '';
+        return String((await res.json())?.version ?? '');
+    } catch { return ''; }
+}
+/** The "running vX · installed vY" line with its two buttons; put it anywhere in the UI. */
+function versionLineHtml() {
+    return `<div class="cs_verline">ที่รันอยู่: <b>v${VERSION}</b> <span data-cs-remote></span>
+        <div class="cs_verbtns"><div class="menu_button" data-cs-check><i class="fa-solid fa-rotate"></i> เช็คเวอร์ชัน</div><div class="menu_button" data-cs-reload><i class="fa-solid fa-cloud-arrow-down"></i> โหลดเวอร์ชันล่าสุด</div></div></div>`;
+}
+function showRemoteVersion(scope = document) {
+    const stale = remoteVersion && newerVersion(remoteVersion, VERSION);
+    scope.querySelectorAll('[data-cs-remote]').forEach(el => {
+        el.innerHTML = !remoteVersion ? '' : stale
+            ? `· ติดตั้งไว้ <b>v${esc(remoteVersion)}</b> <span class="cs_stale">ยังไม่ได้โหลด กด “โหลดเวอร์ชันล่าสุด”</span>`
+            : '· เป็นเวอร์ชันล่าสุดที่ติดตั้งไว้แล้ว';
+    });
+}
+async function checkForNewVersion(force = false) {
+    if (!force && Date.now() - versionCheckedAt < 10 * 60_000) return remoteVersion;
+    versionCheckedAt = Date.now();
+    remoteVersion = await fetchRemoteVersion();
+    showRemoteVersion();
+    if (remoteVersion && newerVersion(remoteVersion, VERSION) && !versionToastShown) {
+        versionToastShown = true;
+        globalThis.toastr?.info(`ติดตั้ง v${esc(remoteVersion)} ไว้แล้ว แต่หน้านี้ยังรัน v${VERSION} อยู่<br>แตะที่นี่เพื่อโหลดเวอร์ชันใหม่`, 'Card Shelf', {
+            timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false, onclick: () => reloadWithFreshFiles(),
+        });
+    }
+    return remoteVersion;
+}
+async function reloadWithFreshFiles() {
+    try {
+        globalThis.toastr?.info('กำลังดึงไฟล์ใหม่…', 'Card Shelf', { timeOut: 2000 });
+        // cache: 'reload' fetches from the server and overwrites the browser's cached copy,
+        // so the page reload below runs the new files
+        await Promise.all(FILES.map(f => fetch(new URL(f, BASE_URL), { cache: 'reload' }).catch(() => null)));
+    } finally {
+        location.reload();
+    }
+}
+function watchVersion() {
+    document.addEventListener('click', e => {
+        const t = e.target instanceof Element ? e.target : null;
+        if (t?.closest('[data-cs-reload]')) reloadWithFreshFiles();
+        else if (t?.closest('[data-cs-check]')) checkForNewVersion(true);
+    });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForNewVersion(); });
+    setTimeout(() => checkForNewVersion(true), 3000);
+}
+
 // ---------------------------------------------------------------- start
 
 jQuery(() => {
     try {
         settings();
         renderSettingsPanel();
+        watchVersion();
         renderTopbar();
         addWandItem();
         registerCommand();
