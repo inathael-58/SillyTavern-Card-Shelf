@@ -407,3 +407,9 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 .cs_settings .cs_good { color: #4cc38a; }
 .cs_settings .cs_bad { color: #ff6369; }
 .cs_settings .cs_setnote ul { margin: 4px 0; padding-left: 18px; }
+
+/* version check + hard refresh */
+.cs_verline { font-size: 0.9em; opacity: 0.85; margin: 2px 0 6px; }
+.cs_verbtns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.cs_verbtns .menu_button { width: auto; margin: 0; font-size: 0.95em; }
+.cs_stale { color: #f5a524; font-weight: 600; }
