@@ -90,7 +90,8 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     padding: 8px 10px;
     border-bottom: 1px solid var(--cs-line);
 }
-.cs_tabs { flex: 1; display: flex; gap: 6px; min-width: 0; }
+.cs_tabs { flex: 1; display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.cs_tabs::-webkit-scrollbar { display: none; }
 .cs_tabs button {
     display: inline-flex;
     align-items: center;
@@ -107,6 +108,12 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     background: color-mix(in srgb, var(--cs-accent) 18%, transparent) !important;
 }
 .cs_tabs button.cs_on i { color: var(--cs-accent); }
+/* four tabs on a phone: the open tab keeps its name, the others are icons */
+@media (max-width: 520px) {
+    .cs_tabs { gap: 4px; }
+    .cs_tabs button { padding: 7px 11px !important; }
+    .cs_tabs button:not(.cs_on) span { display: none; }
+}
 .cs_tool {
     flex: 0 0 auto;
     width: 36px;
@@ -119,10 +126,9 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 }
 .cs_tool:hover, .cs_tool:focus-visible { opacity: 1; background: var(--cs-card) !important; }
 
-/* JanitorAI toolbar and hint: only on the JanitorAI tab */
-/* JanitorAI toolbar, search and list: only on the JanitorAI tab */
+/* list toolbar, search and list: only on the source tabs (JanitorAI, Chub, RisuRealm) */
 .cs_jbar, .cs_searchrow, .cs_list { display: none; }
-.cs_tab_janitor .cs_jbar {
+.cs_tab_list .cs_jbar {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -131,7 +137,7 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     overflow-x: auto;
     scrollbar-width: none;
 }
-.cs_tab_janitor .cs_jbar::-webkit-scrollbar { display: none; }
+.cs_tab_list .cs_jbar::-webkit-scrollbar { display: none; }
 .cs_jbar button {
     flex: 0 0 auto;
     display: inline-flex;
@@ -152,7 +158,7 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 .cs_jbar button.cs_on i { color: var(--cs-accent); }
 
 @media (max-width: 420px) {
-    .cs_tab_janitor .cs_jbar { gap: 0; padding: 6px 6px; }
+    .cs_tab_list .cs_jbar { gap: 0; padding: 6px 6px; }
     .cs_jbar button { padding: 6px 9px !important; gap: 5px; }
 }
 .cs_searchrow .cs_spin[hidden] { display: none; }
@@ -168,7 +174,7 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 }
 .cs_searchrow button:hover, .cs_searchrow button:focus-visible { opacity: 1; background: var(--cs-card) !important; }
 
-.cs_tab_janitor .cs_searchrow {
+.cs_tab_list .cs_searchrow {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -211,8 +217,8 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 }
 .cs_dock { flex: 1; }
 .cs_dock[hidden] { display: none; }
-.cs_tab_janitor .cs_dock, .cs_tab_janitor .cs_nodc { display: none; }
-.cs_tab_janitor .cs_list {
+.cs_tab_list .cs_dock, .cs_tab_list .cs_nodc { display: none; }
+.cs_tab_list .cs_list {
     display: block;
     flex: 1;
     overflow-y: auto;
@@ -413,3 +419,25 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 .cs_verbtns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .cs_verbtns .menu_button { width: auto; margin: 0; font-size: 0.95em; }
 .cs_stale { color: #f5a524; font-weight: 600; }
+
+/* import progress / result in the bot sheet */
+.cs_istatus {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--cs-line);
+    border-radius: 12px;
+    background: var(--cs-card);
+    font-size: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+}
+.cs_istatus[hidden] { display: none; }
+.cs_istatus small { flex-basis: 100%; color: var(--cs-dim); }
+.cs_istatus ul { flex-basis: 100%; margin: 4px 0 0; padding-left: 18px; }
+.cs_istatus .menu_button { margin: 0; padding: 4px 10px; }
+.cs_istatus.cs_good { border-color: color-mix(in srgb, #3c9 60%, var(--cs-line)); }
+.cs_istatus.cs_bad { border-color: color-mix(in srgb, #e55 60%, var(--cs-line)); }
+.cs_actions button:disabled { opacity: 0.5; pointer-events: none; }
+.cs_end code { display: block; margin-top: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; opacity: 0.7; }
