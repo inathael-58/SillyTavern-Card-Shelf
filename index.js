@@ -1,48 +1,53 @@
 /*
  * Card Shelf — SillyTavern UI extension
  *
- * One window, two tabs: Datacat and JanitorAI. The JanitorAI tab lists JanitorAI's Trending
- * (24 hours and week), Popular and Latest bots; tap one, "ส่งไป Datacat" copies its link and switches to the
- * Datacat tab, where Datacat turns it into a card and imports it — Datacat's own import,
- * so first messages and lorebooks come out right. Also lets you freeze or hide Datacat
- * Browser's dancing top-bar cat.
+ * One window with tabs: Datacat, JanitorAI, Chub and RisuRealm.
+ *  - JanitorAI lists Trending (24 hours and week), Popular and Latest; tap a bot, "ส่งไป Datacat"
+ *    copies its link and switches to the Datacat tab, where Datacat builds the card and imports
+ *    it (JanitorAI hides its definitions, Datacat knows how to get them).
+ *  - Chub and RisuRealm publish their cards, so "นำเข้า" imports straight into SillyTavern:
+ *    Chub through SillyTavern's own "Import from URL", RisuRealm by downloading the .charx
+ *    (the only format it still serves for most cards) and handing it to SillyTavern's import.
+ * Also lets you freeze or hide Datacat Browser's dancing top-bar cat.
  *
  * The Datacat tab is Datacat Browser's own window (its iframe and import bridge), placed
  * over the Card Shelf window; Card Shelf never talks to datacat.run itself.
- * JanitorAI doesn't let other sites show its pages in a frame, so its list is read from
- * JanitorAI and drawn here instead.
+ * None of the sites can be read from the browser directly (CORS), so lists are read through
+ * SillyTavern's proxy and drawn here.
  */
 
 import {
-    DEFAULT_SORTS, dockBox, JANITOR_API, listUrl, normalizeList, routedUrl, routeOrder, shortCount, siteUrl,
+    DEFAULT_SORTS, dockBox, JANITOR_API, megabytes, risuDownloadUrl, routedUrl, routeOrder, safeFileName, shortCount,
+    dispositionName, SOURCE_IDS, SOURCES,
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.2.1'; // keep in sync with manifest.json
+const VERSION = '2.3.0'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
 const DEFAULTS = Object.freeze({
     datacatCat: 'animated', // animated | still | hidden — Datacat Browser's top-bar cat
     topbar: true,           // our own icon in the top bar (a still icon, never animated)
-    tab: 'datacat',         // datacat | janitor — the tab Card Shelf opens on
+    tab: 'datacat',         // datacat | janitor | chub | risu — the tab Card Shelf opens on
     jtab: 'trending24',     // trending24 | trending | popular | latest — the JanitorAI list shown
-    closeAfterImport: true, // close Card Shelf when Datacat opens the imported chat
-    nsfw: true,             // include NSFW bots in the JanitorAI lists
-    route: 'auto',          // auto | st | direct | custom — how JanitorAI is reached
-    proxy: '',              // custom proxy, {url} = the encoded JanitorAI address
-    api: JANITOR_API,
+    pick: { chub: 'trending', risu: 'trending' }, // the list shown in the other source tabs
+    shown: { janitor: true, chub: true, risu: true }, // which source tabs are in the window
+    closeAfterImport: true, // close Card Shelf when an imported bot's chat opens
+    nsfw: true,             // include NSFW bots in the lists
+    route: 'auto',          // auto | st | direct | custom — how the sites are reached
+    proxy: '',              // custom proxy, {url} = the encoded site address
+    api: JANITOR_API,       // JanitorAI (kept at the top level as in 2.2)
     sorts: DEFAULT_SORTS,
+    chub: { api: SOURCES.chub.api, sorts: SOURCES.chub.sorts },
+    risu: { api: SOURCES.risu.api, sorts: SOURCES.risu.sorts },
 });
 
-const LISTS = [
-    ['trending24', 'fa-fire', '24 ชม.', 'Trending 24 ชั่วโมง'],
-    ['trending', 'fa-fire', 'สัปดาห์', 'Trending สัปดาห์นี้'],
-    ['popular', 'fa-trophy', 'Popular', 'Popular'],
-    ['latest', 'fa-clock', 'ล่าสุด', 'ล่าสุด'],
-];
+const LISTS = SOURCES.janitor.lists;
 // Names used by 2.1 and earlier (and still accepted by /shelf).
 const LIST_ALIASES = { ranking: 'popular', trending7: 'trending', week: 'trending', '24h': 'trending24' };
+const TAB_ALIASES = { janitorai: 'janitor', jai: 'janitor', chubai: 'chub', characterhub: 'chub', risurealm: 'risu', realm: 'risu' };
+const isSource = t => SOURCE_IDS.includes(t);
 
 const ctx = () => SillyTavern.getContext();
 
@@ -51,20 +56,42 @@ function settings() {
     if (!ext[MODULE]) ext[MODULE] = {};
     const s = ext[MODULE];
     for (const [k, v] of Object.entries(DEFAULTS)) {
-        if (s[k] === undefined) s[k] = (v && typeof v === 'object') ? { ...v } : v;
+        if (s[k] === undefined) s[k] = (v && typeof v === 'object') ? structuredClone(v) : v;
     }
+    for (const src of ['chub', 'risu']) {
+        const d = DEFAULTS[src];
+        if (!s[src] || typeof s[src] !== 'object') s[src] = structuredClone(d);
+        if (!s[src].api) s[src].api = d.api;
+        s[src].sorts ??= {};
+        for (const [k, v] of Object.entries(d.sorts)) if (s[src].sorts[k] === undefined || s[src].sorts[k] === null) s[src].sorts[k] = v;
+        if (!SOURCES[src].lists.some(l => l[0] === s.pick[src])) s.pick[src] = SOURCES[src].lists[0][0];
+    }
+    for (const src of SOURCE_IDS) if (typeof s.shown[src] !== 'boolean') s.shown[src] = true;
     if (s.sorts.ranking !== undefined) { // 2.1's "Ranking" is now "Popular"
         if (s.sorts.ranking !== 'popular') s.sorts.popular = s.sorts.ranking;
         delete s.sorts.ranking;
     }
     for (const [k, v] of Object.entries(DEFAULT_SORTS)) if (!s.sorts[k]) s.sorts[k] = v;
     delete s.pages; // 2.0's frame buttons
-    if (s.tab !== 'janitor') s.tab = 'datacat';
+    if (!isSource(s.tab)) s.tab = 'datacat';
     s.jtab = LIST_ALIASES[s.jtab] ?? s.jtab;
     if (!LISTS.some(l => l[0] === s.jtab)) s.jtab = DEFAULTS.jtab;
     return s;
 }
 const saveSettings = () => ctx().saveSettingsDebounced();
+
+/** API and sort names of a source, from the settings. */
+function conf(src) {
+    const s = settings();
+    return src === 'janitor' ? { api: s.api, sorts: s.sorts } : s[src];
+}
+const listOf = src => (src === 'janitor' ? settings().jtab : settings().pick[src]);
+function setListOf(src, tab) {
+    const s = settings();
+    if (src === 'janitor') s.jtab = tab; else s.pick[src] = tab;
+    saveSettings();
+}
+const shownSources = () => SOURCE_IDS.filter(src => settings().shown[src]);
 const datacatReady = () => typeof window.datacatOpenBrowser === 'function';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -130,9 +157,9 @@ function watchDatacat() {
     for (const ms of [500, 2000, 6000]) setTimeout(again, ms);
 }
 
-// ---------------------------------------------------------------- reaching JanitorAI
+// ---------------------------------------------------------------- reaching the sites
 //
-// JanitorAI doesn't allow other sites to read its API from the browser (CORS), so lists go
+// None of the sites allow other sites to read them from the browser (CORS), so requests go
 // through SillyTavern's own CORS proxy (/proxy/, `enableCorsProxy: true` in config.yaml), or
 // a proxy you choose. The route that worked is tried first next time.
 
@@ -145,7 +172,20 @@ class ReachError extends Error {
     }
 }
 
-async function fetchJson(url) {
+/** What a site said in a JSON error body ({ message } / { error }), if anything. */
+function siteMessage(text) {
+    try {
+        const j = JSON.parse(text);
+        const m = j?.message ?? j?.error;
+        return typeof m === 'string' ? m : '';
+    } catch { return ''; }
+}
+
+/**
+ * Fetch url by each route in turn until `read(response)` succeeds; `read` throws to try the
+ * next route. An abort stops at once.
+ */
+async function viaRoutes(url, read, { signal, accept = 'application/json' } = {}) {
     const s = settings();
     let order = routeOrder(s.route, s.proxy);
     if (goodRoute && order.includes(goodRoute)) order = [goodRoute, ...order.filter(r => r !== goodRoute)];
@@ -153,39 +193,54 @@ async function fetchJson(url) {
     for (const route of order) {
         const target = routedUrl(url, route, s.proxy);
         if (!target) continue;
+        let res;
         try {
-            const res = await fetch(target, { headers: { Accept: 'application/json' }, cache: 'no-store', referrerPolicy: 'no-referrer' });
-            const text = await res.text().catch(() => '');
-            if (!res.ok) {
-                attempts.push({ route, status: res.status, text: text.replace(/\s+/g, ' ').slice(0, 160) });
-                continue;
-            }
-            try {
-                const body = JSON.parse(text);
-                goodRoute = route;
-                return body;
-            } catch {
-                attempts.push({ route, status: res.status, text: /cloudflare|challenge|<html/i.test(text) ? 'cloudflare' : 'not json' });
-            }
+            res = await fetch(target, { headers: { Accept: accept }, cache: 'no-store', referrerPolicy: 'no-referrer', signal });
         } catch (e) {
+            if (signal?.aborted) throw e;
             attempts.push({ route, status: 0, text: errText(e) });
+            continue;
+        }
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            attempts.push({ route, status: res.status, text: text.replace(/\s+/g, ' ').slice(0, 160), msg: siteMessage(text) });
+            continue;
+        }
+        try {
+            const out = await read(res);
+            goodRoute = route;
+            return out;
+        } catch (e) {
+            if (signal?.aborted) throw e;
+            attempts.push({ route, status: res.status, text: errText(e) });
         }
     }
     throw new ReachError(attempts);
 }
 
+const fetchJson = url => viaRoutes(url, async res => {
+    const text = await res.text();
+    try {
+        return JSON.parse(text);
+    } catch {
+        throw new Error(/cloudflare|challenge|<html/i.test(text) ? 'cloudflare' : 'not json');
+    }
+});
+
 /** What went wrong, in words, with what to do about it. */
-function explainReach(err) {
+function explainReach(err, site = 'เว็บ') {
     const tips = [];
     for (const a of err?.attempts ?? []) {
         if (a.route === 'st' && a.status === 404 && /CORS proxy is disabled/i.test(a.text)) {
             tips.push('พร็อกซีของ SillyTavern ยังปิดอยู่ — เปิดไฟล์ <code>config.yaml</code> ตั้ง <code>enableCorsProxy: true</code> แล้วรีสตาร์ท SillyTavern');
+        } else if (a.msg) {
+            tips.push(`${esc(site)} ตอบว่า: ${esc(a.msg)} (${esc(a.status)})`);
         } else if (a.status === 403 || a.status === 503 || a.text === 'cloudflare') {
-            tips.push(`JanitorAI (Cloudflare) ไม่ยอมให้เครื่องที่รัน SillyTavern อ่าน (${esc(a.route)} ${a.status || ''}) — ลองใหม่ภายหลัง หรือใช้พร็อกซีอื่นในการตั้งค่า`);
+            tips.push(`${esc(site)} (Cloudflare) ไม่ยอมให้เครื่องที่รัน SillyTavern อ่าน (${esc(a.route)} ${a.status || ''}) — ลองใหม่ภายหลัง หรือใช้พร็อกซีอื่นในการตั้งค่า`);
         } else if (a.route === 'direct' && a.status === 0) {
-            tips.push('เบราว์เซอร์บล็อกการอ่าน JanitorAI ตรง ๆ (CORS) — ต้องผ่านพร็อกซี');
+            tips.push(`เบราว์เซอร์บล็อกการอ่าน ${esc(site)} ตรง ๆ (CORS) — ต้องผ่านพร็อกซี`);
         } else if (a.status === 429) {
-            tips.push('JanitorAI ขอให้ช้าลง (429) — รอสักครู่แล้วลองใหม่');
+            tips.push(`${esc(site)} ขอให้ช้าลง (429) — รอสักครู่แล้วลองใหม่`);
         } else {
             tips.push(`${esc(a.route)}: ${esc(a.status || '')} ${esc(a.text)}`);
         }
@@ -224,17 +279,19 @@ async function copyText(text) {
 const ui = {
     root: null,
     open: false,
-    tab: 'datacat',
+    tab: 'datacat', // datacat or a source id
     docked: false,
     resize: null,
-    jtab: 'trending24',
-    search: '',
-    lists: {},      // listKey() → { tab, search, items, page, pages, done, loading, error }
+    searches: Object.fromEntries(SOURCE_IDS.map(src => [src, ''])),
+    lists: {},      // listKey() → { src, tab, search, items, page, pages, done, loading, error }
+    apiWorked: {},  // src → the API address that answered (a default's alternate, if it had to)
     observer: null,
     noteTimer: null,
+    importing: null, // AbortController of the import in progress
 };
 
-const listKey = () => JSON.stringify([ui.jtab, ui.search, settings().nsfw, settings().api, settings().sorts[ui.jtab]]);
+const listKey = (src = ui.tab) => JSON.stringify([src, listOf(src), ui.searches[src], settings().nsfw, conf(src).api, conf(src).sorts[listOf(src)]]);
+const itemKey = it => `${it.src}:${it.id}`;
 const allItems = () => Object.values(ui.lists).flatMap(l => l.items);
 
 function buildWindow() {
@@ -246,22 +303,17 @@ function buildWindow() {
         <div class="cs_backdrop"></div>
         <section class="cs_panel" role="dialog" aria-modal="true" aria-label="Card Shelf">
             <header class="cs_head">
-                <nav class="cs_tabs" role="tablist">
-                    <button data-tab="datacat" role="tab"><i class="fa-solid fa-cat"></i><span>Datacat</span></button>
-                    <button data-tab="janitor" role="tab"><i class="fa-solid fa-broom"></i><span>JanitorAI</span></button>
-                </nav>
+                <nav class="cs_tabs" role="tablist"></nav>
                 <button class="cs_tool cs_close" title="ปิด (Esc)" aria-label="ปิด"><i class="fa-solid fa-xmark"></i></button>
             </header>
             <div class="cs_note" hidden></div>
-            <div class="cs_jbar">
-                ${LISTS.map(([id, icon, label, title]) => `<button data-list="${id}" title="${title}"><i class="fa-solid ${icon}"></i><span>${label}</span></button>`).join('')}
-            </div>
+            <div class="cs_jbar"></div>
             <form class="cs_searchrow">
                 <i class="fa-solid fa-magnifying-glass"></i>
-                <input type="search" class="cs_search" placeholder="ค้นหาบอทบน JanitorAI" autocomplete="off" spellcheck="false" enterkeyhint="search">
+                <input type="search" class="cs_search" autocomplete="off" spellcheck="false" enterkeyhint="search">
                 <i class="fa-solid fa-circle-notch fa-spin cs_spin" hidden></i>
                 <button type="button" class="cs_jreload" title="โหลดใหม่"><i class="fa-solid fa-rotate"></i></button>
-                <button type="button" class="cs_jout" title="เปิดหน้านี้บนเว็บ JanitorAI"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
+                <button type="button" class="cs_jout"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
             </form>
             <div class="cs_body">
                 <div class="cs_dock"></div>
@@ -286,48 +338,70 @@ function buildWindow() {
     });
     q('.cs_jbar').addEventListener('click', e => {
         const b = e.target.closest('button[data-list]');
-        if (!b) return;
-        ui.jtab = settings().jtab = b.dataset.list;
-        saveSettings();
+        if (!b || !isSource(ui.tab)) return;
+        setListOf(ui.tab, b.dataset.list);
         renderList();
     });
     q('.cs_jreload').addEventListener('click', () => { delete ui.lists[listKey()]; goodRoute = null; renderList(); });
     q('.cs_jout').addEventListener('click', () => {
-        const s = settings();
-        window.open(siteUrl({ sort: s.sorts[ui.jtab], search: ui.search, nsfw: s.nsfw }), '_blank', 'noopener');
+        if (!isSource(ui.tab)) return;
+        const src = SOURCES[ui.tab];
+        window.open(src.siteUrl({ sort: conf(ui.tab).sorts[listOf(ui.tab)], search: ui.searches[ui.tab], nsfw: settings().nsfw }), '_blank', 'noopener');
     });
     q('.cs_searchrow').addEventListener('submit', e => {
         e.preventDefault();
-        ui.search = q('.cs_search').value.trim();
+        if (!isSource(ui.tab)) return;
+        ui.searches[ui.tab] = q('.cs_search').value.trim();
         q('.cs_search').blur();
         renderList();
     });
     q('.cs_search').addEventListener('search', () => {
-        if (q('.cs_search').value === '' && ui.search) { ui.search = ''; renderList(); }
+        if (isSource(ui.tab) && q('.cs_search').value === '' && ui.searches[ui.tab]) { ui.searches[ui.tab] = ''; renderList(); }
     });
     q('.cs_list').addEventListener('click', e => {
         const card = e.target.closest('.cs_card');
-        const item = card && allItems().find(i => i.id === card.dataset.id);
+        const item = card && allItems().find(i => itemKey(i) === card.dataset.key);
         if (item) openSheet(item);
     });
+    renderTabs();
     return root;
 }
 
-function openShelf(tab) {
-    tab = LIST_ALIASES[tab] ?? tab;
+/** The tab buttons: Datacat, then each source that is switched on in the settings. */
+function renderTabs() {
+    const nav = ui.root?.querySelector('.cs_tabs');
+    if (!nav) return;
+    nav.innerHTML = [
+        '<button data-tab="datacat" role="tab" title="Datacat"><i class="fa-solid fa-cat"></i><span>Datacat</span></button>',
+        ...shownSources().map(src => `<button data-tab="${src}" role="tab" title="${esc(SOURCES[src].name)}"><i class="fa-solid ${SOURCES[src].icon}"></i><span>${esc(SOURCES[src].short)}</span></button>`),
+    ].join('');
+    for (const b of nav.querySelectorAll('button')) b.classList.toggle('cs_on', b.dataset.tab === ui.tab);
+}
+
+/** Turn "/shelf …" words into a tab (and maybe a list): risu, chub downloads, trending24 … */
+function parseTarget(arg) {
+    const words = String(arg ?? '').toLowerCase().split(/[\s:/]+/).filter(Boolean);
+    let tab, list;
+    for (const w0 of words) {
+        const w = TAB_ALIASES[w0] ?? w0;
+        if (w === 'datacat' || isSource(w)) { tab = w; continue; }
+        const jl = LIST_ALIASES[w] ?? w;
+        const src = tab && isSource(tab) ? tab : 'janitor';
+        if (SOURCES[src].lists.some(l => l[0] === jl)) { tab = src; list = jl; }
+    }
+    return { tab, list };
+}
+
+function openShelf(target) {
     if (!ui.root) ui.root = buildWindow();
     const s = settings();
     ui.root.hidden = false;
     ui.open = true;
     document.addEventListener('keydown', onKey, true);
     requestAnimationFrame(() => ui.root?.classList.add('cs_in'));
-    if (LISTS.some(l => l[0] === tab)) {
-        ui.jtab = s.jtab = tab;
-        showTab('janitor');
-    } else {
-        ui.jtab = s.jtab;
-        showTab(tab === 'janitor' || tab === 'datacat' ? tab : s.tab);
-    }
+    const { tab, list } = parseTarget(target);
+    if (tab && list) setListOf(tab, list);
+    showTab(tab ?? s.tab);
 }
 
 function closeShelf() {
@@ -347,19 +421,36 @@ function onKey(e) {
 }
 
 function showTab(tab, { remember = false } = {}) {
-    ui.tab = tab === 'janitor' ? 'janitor' : 'datacat';
+    // a source tab that was switched off falls back to Datacat
+    ui.tab = isSource(tab) && settings().shown[tab] ? tab : 'datacat';
     if (remember) { settings().tab = ui.tab; saveSettings(); }
     const root = ui.root;
-    for (const b of root.querySelectorAll('.cs_tabs button')) b.classList.toggle('cs_on', b.dataset.tab === ui.tab);
-    root.classList.toggle('cs_tab_janitor', ui.tab === 'janitor');
-    root.classList.toggle('cs_tab_datacat', ui.tab === 'datacat');
-    if (ui.tab === 'janitor') {
+    renderTabs();
+    const list = isSource(ui.tab);
+    root.classList.toggle('cs_tab_list', list);
+    root.classList.toggle('cs_tab_datacat', !list);
+    root.dataset.src = list ? ui.tab : '';
+    if (list) {
         undockDatacat();
+        renderBar();
         renderList({ keep: true });
     } else {
         closeSheet();
         dockDatacat();
     }
+}
+
+/** The list buttons, search hint and site button of the current source tab. */
+function renderBar() {
+    const src = SOURCES[ui.tab];
+    const q = sel => ui.root.querySelector(sel);
+    const bar = q('.cs_jbar');
+    if (bar.dataset.src !== src.id) {
+        bar.dataset.src = src.id;
+        bar.innerHTML = src.lists.map(([id, icon, label, title]) => `<button data-list="${id}" title="${esc(title)}"><i class="fa-solid ${icon}"></i><span>${esc(label)}</span></button>`).join('');
+    }
+    q('.cs_search').placeholder = `ค้นหาบอทบน ${src.name}`;
+    q('.cs_jout').title = `เปิดหน้านี้บนเว็บ ${src.name}`;
 }
 
 /** A short message under the tabs (never covered by Datacat's window). */
@@ -381,27 +472,51 @@ function setBusy(on) {
     if (spin) spin.hidden = !on;
 }
 
-// ---------------------------------------------------------------- JanitorAI list
+// ---------------------------------------------------------------- lists
+
+/**
+ * One page of a source's list. A source whose default API has another address (Chub's
+ * gateway / api) tries that one too, and keeps whichever answered.
+ */
+async function fetchPage(srcId, { tab, page, search }) {
+    const src = SOURCES[srcId];
+    const c = conf(srcId);
+    const apis = [...new Set([ui.apiWorked[srcId] ?? c.api, c.api, ...(c.api === src.api ? src.apiAlternates ?? [] : [])])];
+    let last;
+    for (const api of apis) {
+        try {
+            const json = await fetchJson(src.listUrl({ api, sort: c.sorts[tab], page, search, nsfw: settings().nsfw }));
+            const r = src.normalize(json, page);
+            ui.apiWorked[srcId] = api;
+            return { ...r, json };
+        } catch (e) {
+            last = e;
+            if (!(e instanceof ReachError)) throw e;
+        }
+    }
+    throw last;
+}
 
 function renderList({ keep = false } = {}) {
-    if (!ui.root) return;
+    if (!ui.root || !isSource(ui.tab)) return;
+    const src = ui.tab;
     const q = sel => ui.root.querySelector(sel);
-    for (const b of ui.root.querySelectorAll('.cs_jbar button[data-list]')) b.classList.toggle('cs_on', b.dataset.list === ui.jtab);
-    q('.cs_search').value = ui.search;
+    for (const b of ui.root.querySelectorAll('.cs_jbar button[data-list]')) b.classList.toggle('cs_on', b.dataset.list === listOf(src));
+    q('.cs_search').value = ui.searches[src];
     const box = q('.cs_list');
-    const key = listKey();
+    const key = listKey(src);
     // Coming back to the tab: leave the list (and the scroll position) as it was.
     if (keep && box.dataset.key === key && box.childElementCount) return;
     closeSheet();
     ui.observer?.disconnect();
     box.dataset.key = key;
     box.scrollTop = 0;
-    const list = ui.lists[key] ??= { tab: ui.jtab, search: ui.search, items: [], page: 0, pages: 0, done: false, loading: false, error: null };
+    const list = ui.lists[key] ??= { src, tab: listOf(src), search: ui.searches[src], items: [], page: 0, pages: 0, done: false, loading: false, error: null };
     box.innerHTML = `
-        ${ui.search ? `<div class="cs_listnote">ผลค้นหา “${esc(ui.search)}”</div>` : ''}
+        ${list.search ? `<div class="cs_listnote">ผลค้นหา “${esc(list.search)}”</div>` : ''}
         <div class="cs_grid" role="list"></div>
         <div class="cs_more"></div>`;
-    appendCards(box.querySelector('.cs_grid'), list.items, 0, list.tab);
+    appendCards(box.querySelector('.cs_grid'), list.items, 0, list);
     updateMore(list);
     ui.observer = new IntersectionObserver(entries => {
         if (entries.some(e => e.isIntersecting)) loadMore(key);
@@ -413,22 +528,21 @@ function renderList({ keep = false } = {}) {
 async function loadMore(key) {
     const list = ui.lists[key];
     if (!list || list.loading || list.done || list.error) return;
-    const s = settings();
     list.loading = true;
     setBusy(true);
     refreshMore(key);
     try {
         const page = list.page + 1;
-        const json = await fetchJson(listUrl({ api: s.api, sort: s.sorts[list.tab], page, search: list.search, nsfw: s.nsfw }));
-        const r = normalizeList(json, page);
-        const seen = new Set(list.items.map(i => i.id));
-        const fresh = r.items.filter(i => !seen.has(i.id));
+        const r = await fetchPage(list.src, { tab: list.tab, page, search: list.search });
+        const seen = new Set(list.items.map(itemKey));
+        const fresh = r.items.map(it => ({ ...it, src: list.src })).filter(it => !seen.has(itemKey(it)));
         const start = list.items.length;
         list.items.push(...fresh);
         list.page = page;
         list.pages = r.pages;
-        list.done = !fresh.length || (r.pages && page >= r.pages);
-        if (isShown(key)) appendCards(ui.root.querySelector('.cs_grid'), fresh, start, list.tab);
+        list.done = !fresh.length || Boolean(r.pages && page >= r.pages);
+        if (!r.items.length && page === 1 && !list.search) list.empty = JSON.stringify(r.json ?? '').slice(0, 200);
+        if (isShown(key)) appendCards(ui.root.querySelector('.cs_grid'), fresh, start, list);
     } catch (e) {
         console.warn(LOG, 'list', e);
         list.error = e;
@@ -453,51 +567,74 @@ function refreshMore(key) {
 function updateMore(list) {
     const more = ui.root?.querySelector('.cs_more');
     if (!more) return;
+    const name = SOURCES[list.src].name;
     if (list.error) {
-        const tips = list.error instanceof ReachError ? explainReach(list.error) : [esc(errText(list.error))];
+        const tips = list.error instanceof ReachError ? explainReach(list.error, name) : [esc(errText(list.error))];
+        const datacatHint = SOURCES[list.src].importer === 'datacat' ? '<small>เปิดบนเว็บแล้วคัดลอกลิงก์บอทจากตรงนั้น มาวางในแท็บ Datacat ได้เหมือนกัน</small>' : '';
         more.innerHTML = `
             <div class="cs_error">
-                <b><i class="fa-solid fa-triangle-exclamation"></i> อ่านรายชื่อจาก JanitorAI ไม่ได้</b>
+                <b><i class="fa-solid fa-triangle-exclamation"></i> อ่านรายชื่อจาก ${esc(name)} ไม่ได้</b>
                 <ul>${tips.map(t => `<li>${t}</li>`).join('')}</ul>
                 <div class="cs_row">
                     <button class="menu_button cs_retry"><i class="fa-solid fa-rotate"></i> ลองใหม่</button>
-                    <button class="menu_button cs_opensite"><i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดบนเว็บ JanitorAI</button>
+                    <button class="menu_button cs_opensite"><i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดบนเว็บ ${esc(name)}</button>
                 </div>
-                <small>เปิดบนเว็บแล้วคัดลอกลิงก์บอทจากตรงนั้น มาวางในแท็บ Datacat ได้เหมือนกัน</small>
+                ${datacatHint}
             </div>`;
-        more.querySelector('.cs_retry').addEventListener('click', () => { list.error = null; goodRoute = null; updateMore(list); loadMore(listKey()); });
+        more.querySelector('.cs_retry').addEventListener('click', () => { list.error = null; goodRoute = null; updateMore(list); loadMore(listKey(list.src)); });
         more.querySelector('.cs_opensite').addEventListener('click', () => ui.root.querySelector('.cs_jout').click());
     } else if (list.loading) {
         more.innerHTML = '<div class="cs_loading"><i class="fa-solid fa-circle-notch fa-spin"></i> กำลังโหลด…</div>';
     } else if (list.done) {
-        more.innerHTML = list.items.length ? '<div class="cs_end">หมดแล้ว</div>' : '<div class="cs_end">ไม่พบบอท</div>';
+        more.innerHTML = list.items.length ? '<div class="cs_end">หมดแล้ว</div>'
+            : list.empty ? `<div class="cs_end">ต่อ ${esc(name)} ได้ แต่ไม่พบรายชื่อบอทในคำตอบ — เว็บอาจเปลี่ยนรูปแบบ ลองแก้ API ในการตั้งค่า<br><code>${esc(list.empty)}</code></div>`
+                : '<div class="cs_end">ไม่พบบอท</div>';
     } else {
         more.innerHTML = '<button class="menu_button cs_loadmore">โหลดเพิ่ม</button>';
-        more.querySelector('.cs_loadmore').addEventListener('click', () => loadMore(listKey()));
+        more.querySelector('.cs_loadmore').addEventListener('click', () => loadMore(listKey(list.src)));
     }
 }
 
-function appendCards(grid, items, start, tab) {
+/** The main number under a card: chats where the site counts them, else downloads, else stars. */
+function mainStat(it) {
+    if (it.chats) return ['fa-comments', it.chats];
+    if (it.downloads) return ['fa-download', it.downloads];
+    if (it.stars) return ['fa-star', it.stars];
+    return null;
+}
+
+function appendCards(grid, items, start, list) {
     if (!grid || !items.length) return;
-    const ranked = tab !== 'latest' && !ui.search;
-    grid.insertAdjacentHTML('beforeend', items.map((it, i) => `
-        <button class="cs_card" role="listitem" data-id="${esc(it.id)}">
+    const ranked = SOURCES[list.src].ranked(list.tab) && !list.search;
+    grid.insertAdjacentHTML('beforeend', items.map((it, i) => {
+        const stat = mainStat(it);
+        return `
+        <button class="cs_card" role="listitem" data-key="${esc(itemKey(it))}">
             <span class="cs_cover">
                 ${it.avatar ? `<img src="${esc(it.avatar)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : '<i class="fa-solid fa-user"></i>'}
                 ${ranked ? `<span class="cs_rank">${start + i + 1}</span>` : ''}
                 ${it.nsfw ? '<span class="cs_nsfw">NSFW</span>' : ''}
             </span>
             <span class="cs_cname">${esc(it.name)}</span>
-            <span class="cs_meta">${it.chats ? `<i class="fa-solid fa-comments"></i> ${shortCount(it.chats)}` : ''}${it.creator ? ` · @${esc(it.creator)}` : ''}</span>
+            <span class="cs_meta">${stat ? `<i class="fa-solid ${stat[0]}"></i> ${shortCount(stat[1])}` : ''}${it.creator ? `${stat ? ' · ' : ''}@${esc(it.creator)}` : ''}</span>
             <span class="cs_tags">${it.tags.slice(0, 3).map(t => `<span>${esc(t)}</span>`).join('')}</span>
-        </button>`).join(''));
+        </button>`;
+    }).join(''));
 }
 
 // ---------------------------------------------------------------- bot sheet
 
+const BADGES = {
+    lorebook: ['fa-book', 'มีลอร์บุ๊ค'],
+    emotion: ['fa-face-smile', 'มีรูปอีโมชัน'],
+    assets: ['fa-images', 'มีไฟล์ประกอบ'],
+};
+
 function openSheet(item) {
     const sheet = ui.root?.querySelector('.cs_sheet');
     if (!sheet) return;
+    const src = SOURCES[item.src];
+    const viaDatacat = src.importer === 'datacat';
     sheet.hidden = false;
     sheet.innerHTML = `
         <div class="cs_sheetbar">
@@ -513,16 +650,23 @@ function openSheet(item) {
                     <div class="cs_stats">
                         ${item.chats ? `<span><i class="fa-solid fa-comments"></i> ${shortCount(item.chats)} แชท</span>` : ''}
                         ${item.messages ? `<span><i class="fa-solid fa-message"></i> ${shortCount(item.messages)} ข้อความ</span>` : ''}
+                        ${item.downloads ? `<span><i class="fa-solid fa-download"></i> ${shortCount(item.downloads)} ดาวน์โหลด</span>` : ''}
+                        ${item.stars ? `<span><i class="fa-solid fa-star"></i> ${shortCount(item.stars)}</span>` : ''}
+                        ${(item.badges ?? []).filter(b => BADGES[b]).map(b => `<span><i class="fa-solid ${BADGES[b][0]}"></i> ${BADGES[b][1]}</span>`).join('')}
                         ${item.nsfw ? '<span class="cs_nsfw">NSFW</span>' : ''}
                     </div>
+                    ${item.license ? `<div class="cs_by">สัญญาอนุญาต: ${esc(item.license)}</div>` : ''}
                     <div class="cs_tags cs_tagsfull">${item.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>
                 </div>
             </div>
             <div class="cs_actions">
-                <button class="menu_button cs_send"><i class="fa-solid fa-cat"></i> ส่งไป Datacat</button>
+                ${viaDatacat
+        ? '<button class="menu_button cs_send"><i class="fa-solid fa-cat"></i> ส่งไป Datacat</button>'
+        : '<button class="menu_button cs_import"><i class="fa-solid fa-file-import"></i> นำเข้า</button>'}
                 <button class="menu_button cs_copy"><i class="fa-regular fa-copy"></i> คัดลอกลิงก์</button>
-                <button class="menu_button cs_openpage"><i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดใน JanitorAI</button>
+                <button class="menu_button cs_openpage"><i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดใน ${esc(src.name)}</button>
             </div>
+            <div class="cs_istatus" hidden></div>
             <label class="cs_linkrow" hidden>คัดลอกเองจากช่องนี้ได้<input type="text" class="text_pole cs_link" readonly value="${esc(item.url)}"></label>
             ${item.description ? `<div class="cs_desc">${esc(item.description)}</div>` : ''}
         </div>`;
@@ -538,18 +682,158 @@ function openSheet(item) {
         if (await copyText(item.url)) note(`<i class="fa-solid fa-check"></i> คัดลอกลิงก์ ${esc(item.name)} แล้ว`, 3000);
         else showLink();
     });
-    q('.cs_send').addEventListener('click', async () => {
+    q('.cs_send')?.addEventListener('click', async () => {
         if (!(await copyText(item.url))) { showLink(); return; }
         showTab('datacat', { remember: false });
         note(`<i class="fa-regular fa-clipboard"></i> คัดลอกลิงก์ <b>${esc(item.name)}</b> แล้ว — วางลงในช่องของ Datacat ได้เลย`);
     });
+    q('.cs_import')?.addEventListener('click', () => importItem(item, sheet));
 }
 
 function closeSheet() {
     const sheet = ui.root?.querySelector('.cs_sheet');
     if (!sheet || sheet.hidden) return;
+    ui.importing?.abort();
     sheet.hidden = true;
     sheet.innerHTML = '';
+}
+
+// ---------------------------------------------------------------- importing into SillyTavern
+//
+// Chub: SillyTavern's own "Import from URL" downloads the card on the server and hands back
+// the file. RisuRealm: its own importer in SillyTavern asks for a PNG, which RisuRealm no
+// longer serves for most cards, so Card Shelf downloads the .charx through the proxy instead.
+// Either way the file then goes through SillyTavern's character import (the same one as the
+// import button), and the new character's chat is opened.
+
+function requestHeaders({ json = true } = {}) {
+    const h = { ...(ctx().getRequestHeaders?.() ?? {}) };
+    if (!json) delete h['Content-Type'];
+    return h;
+}
+
+/** SillyTavern's "Import from URL": the server fetches the card and returns the file. */
+async function fileFromStImporter(url, signal) {
+    const res = await fetch('/api/content/importURL', {
+        method: 'POST',
+        headers: requestHeaders(),
+        body: JSON.stringify({ url }),
+        signal,
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`SillyTavern ดึงการ์ดไม่ได้ (${res.status}${text ? `: ${text.slice(0, 160)}` : ''})`);
+    }
+    const kind = res.headers.get('X-Custom-Content-Type');
+    if (kind && kind !== 'character') throw new Error(`ลิงก์นี้เป็น ${kind} ไม่ใช่ตัวละคร`);
+    const blob = await res.blob();
+    const name = dispositionName(res.headers.get('Content-Disposition')) || safeFileName('character', blob.type.includes('json') ? 'json' : 'png');
+    return new File([blob], name, { type: blob.type });
+}
+
+/** Download a RisuRealm .charx through the proxy, reporting bytes as they arrive. */
+async function fileFromRisu(item, signal, onBytes) {
+    const url = risuDownloadUrl(item.id, conf('risu').api);
+    const blob = await viaRoutes(url, async res => {
+        const reader = res.body?.getReader?.();
+        if (!reader) return res.blob();
+        const chunks = [];
+        let got = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!chunks.length && !(value[0] === 0x50 && value[1] === 0x4b)) { // "PK": a zip
+                reader.cancel().catch(() => {});
+                throw new Error(new TextDecoder().decode(value.slice(0, 200)).includes('<') ? 'cloudflare' : 'not a charx');
+            }
+            chunks.push(value);
+            got += value.length;
+            onBytes(got);
+        }
+        return new Blob(chunks, { type: 'application/zip' });
+    }, { signal, accept: 'application/zip, application/octet-stream, */*' });
+    return new File([blob], safeFileName(item.name, 'charx'), { type: 'application/zip' });
+}
+
+/** SillyTavern's character import. Returns the new character's avatar file name. */
+async function importFile(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    const form = new FormData();
+    form.append('avatar', file);
+    form.append('file_type', ext);
+    form.append('user_name', ctx().name1 ?? '');
+    const res = await fetch('/api/characters/import', { method: 'POST', body: form, headers: requestHeaders({ json: false }), cache: 'no-cache' });
+    if (!res.ok) throw new Error(`SillyTavern นำเข้าไม่ได้ (${res.status} ${res.statusText})`);
+    const data = await res.json().catch(() => ({}));
+    if (data.error || !data.file_name) {
+        throw new Error(ext === 'charx'
+            ? 'SillyTavern นำเข้าไฟล์ .charx ไม่ได้ — SillyTavern อาจเก่าเกินไป (อัปเดตให้รองรับ CharX) หรือไฟล์เสีย'
+            : 'SillyTavern นำเข้าการ์ดนี้ไม่ได้ (ไฟล์อาจเสีย)');
+    }
+    return `${data.file_name}.png`;
+}
+
+/** Refresh the character list and open the chat of the given avatar. */
+async function openCharacter(avatar) {
+    const c = ctx();
+    await c.getCharacters?.();
+    const index = ctx().characters.findIndex(ch => ch.avatar === avatar);
+    if (index < 0 || typeof c.selectCharacterById !== 'function') return false;
+    if (settings().closeAfterImport) closeShelf();
+    await c.selectCharacterById(index);
+    return true;
+}
+
+async function importItem(item, sheet) {
+    if (ui.importing) return;
+    const src = SOURCES[item.src];
+    const btn = sheet.querySelector('.cs_import');
+    const box = sheet.querySelector('.cs_istatus');
+    const say = (html, cls = '') => {
+        if (!box.isConnected) return;
+        box.hidden = false;
+        box.className = `cs_istatus ${cls}`;
+        box.innerHTML = html;
+    };
+    const ctl = new AbortController();
+    ui.importing = ctl;
+    btn.disabled = true;
+    const cancel = '<button class="menu_button cs_cancel"><i class="fa-solid fa-xmark"></i> ยกเลิก</button>';
+    const wireCancel = () => box.querySelector('.cs_cancel')?.addEventListener('click', () => ctl.abort());
+    try {
+        let file;
+        if (src.importer === 'charx') {
+            say(`<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังดาวน์โหลดการ์ดจาก ${esc(src.name)}… <b class="cs_bytes"></b> ${cancel}<small>RisuRealm ส่งการ์ดเป็นไฟล์ .charx รวมรูปอีโมชันมาด้วย บางใบใหญ่หลายสิบ MB</small>`);
+            wireCancel();
+            let last = 0;
+            file = await fileFromRisu(item, ctl.signal, got => {
+                if (Date.now() - last < 250) return;
+                last = Date.now();
+                const span = box.querySelector('.cs_bytes');
+                if (span) span.textContent = megabytes(got);
+            });
+        } else {
+            say(`<i class="fa-solid fa-circle-notch fa-spin"></i> SillyTavern กำลังดึงการ์ดจาก ${esc(src.name)}… ${cancel}`);
+            wireCancel();
+            file = await fileFromStImporter(item.url, ctl.signal);
+        }
+        say(`<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังนำเข้า ${esc(item.name)} (${megabytes(file.size)})…`);
+        const avatar = await importFile(file);
+        globalThis.toastr?.success(`นำเข้า ${esc(item.name)} แล้ว`, 'Card Shelf');
+        say(`<i class="fa-solid fa-check"></i> นำเข้าแล้ว — เปิดแชท…`, 'cs_good');
+        if (!(await openCharacter(avatar))) say('<i class="fa-solid fa-check"></i> นำเข้าแล้ว — เปิดจากรายชื่อตัวละครได้เลย', 'cs_good');
+    } catch (e) {
+        if (ctl.signal.aborted) {
+            say('ยกเลิกแล้ว');
+        } else {
+            console.warn(LOG, 'import', e);
+            const tips = e instanceof ReachError ? explainReach(e, src.name) : [esc(errText(e))];
+            say(`<b><i class="fa-solid fa-triangle-exclamation"></i> นำเข้าไม่ได้</b><ul>${tips.map(t => `<li>${t}</li>`).join('')}</ul><small>ดาวน์โหลดจากหน้าเว็บ (ปุ่ม “เปิดใน ${esc(src.name)}”) แล้วนำเข้าด้วยปุ่มนำเข้าของ SillyTavern ได้เหมือนกัน</small>`, 'cs_bad');
+        }
+    } finally {
+        if (ui.importing === ctl) ui.importing = null;
+        btn.disabled = false;
+    }
 }
 
 // ---------------------------------------------------------------- Datacat inside the window
@@ -623,7 +907,7 @@ function renderTopbar() {
     el = document.createElement('div');
     el.id = 'cs_topbar';
     el.className = 'drawer';
-    el.innerHTML = '<div class="drawer-toggle"><div class="drawer-icon fa-regular fa-compass interactable cs_ticon" title="Card Shelf — Datacat / JanitorAI" tabindex="0"></div></div>';
+    el.innerHTML = '<div class="drawer-toggle"><div class="drawer-icon fa-regular fa-compass interactable cs_ticon" title="Card Shelf — Datacat / JanitorAI / Chub / RisuRealm" tabindex="0"></div></div>';
     const before = document.getElementById('rightNavHolder');
     if (before?.parentElement === holder) holder.insertBefore(el, before); else holder.append(el);
     el.addEventListener('click', e => { e.stopPropagation(); ui.open ? closeShelf() : openShelf(); });
@@ -647,6 +931,17 @@ function renderSettingsPanel() {
     if (!host || document.getElementById('cs_settings')) return;
     const s = settings();
     const radio = (value, label) => `<label class="checkbox_label"><input type="radio" name="cs_datacatCat" value="${value}"${s.datacatCat === value ? ' checked' : ''}> ${label}</label>`;
+    const how = {
+        datacat: 'ส่งลิงก์ให้ Datacat สร้างการ์ด',
+        'st-url': 'นำเข้าตรงด้วยระบบของ SillyTavern',
+        charx: 'ดาวน์โหลดไฟล์ .charx แล้วนำเข้าด้วยระบบของ SillyTavern',
+    };
+    const sourceAdv = src => `
+                    <h4 class="cs_sethead">${esc(SOURCES[src].name)}</h4>
+                    <label class="cs_field">API<input type="text" class="text_pole" data-api="${src}"></label>
+                    <div class="cs_sorts">
+                        ${SOURCES[src].lists.map(([id, , , title]) => `<label class="cs_field">${esc(title)}<input type="text" class="text_pole" data-src="${src}" data-sort="${id}"></label>`).join('')}
+                    </div>`;
     host.insertAdjacentHTML('beforeend', `
     <div id="cs_settings" class="cs_settings">
         <div class="inline-drawer">
@@ -658,15 +953,17 @@ function renderSettingsPanel() {
                 ${versionLineHtml()}
                 <div class="cs_row"><div id="cs_set_open" class="menu_button"><i class="fa-regular fa-compass"></i> เปิด Card Shelf</div></div>
                 <label class="checkbox_label"><input type="checkbox" id="cs_set_topbar"> ไอคอนเข็มทิศบนแถบด้านบน (ไอคอนนิ่ง ไม่มีแอนิเมชัน)</label>
+                <h4 class="cs_sethead">แท็บ</h4>
+                ${SOURCE_IDS.map(src => `<label class="checkbox_label"><input type="checkbox" data-shown="${src}"> ${esc(SOURCES[src].name)} <small>— ${how[SOURCES[src].importer]}</small></label>`).join('')}
                 <label class="cs_field">เปิดมาที่แท็บ
                     <select id="cs_set_tab" class="text_pole">
                         <option value="datacat">Datacat</option>
-                        <option value="janitor">JanitorAI</option>
+                        ${SOURCE_IDS.map(src => `<option value="${src}">${esc(SOURCES[src].name)}</option>`).join('')}
                     </select>
                 </label>
-                <label class="checkbox_label"><input type="checkbox" id="cs_set_close"> ปิด Card Shelf เมื่อ Datacat นำเข้าเสร็จและเปิดแชทแล้ว</label>
-                <label class="checkbox_label"><input type="checkbox" id="cs_set_nsfw"> แสดงบอท NSFW ในรายชื่อ JanitorAI</label>
-                <small id="cs_set_nodc" class="cs_setnote cs_warn" hidden>ยังไม่พบ Datacat SillyTavern Browser — แท็บ Datacat ต้องใช้ส่วนขยายนี้: <code>${DATACAT_REPO}</code></small>
+                <label class="checkbox_label"><input type="checkbox" id="cs_set_close"> ปิด Card Shelf เมื่อนำเข้าเสร็จและเปิดแชทแล้ว</label>
+                <label class="checkbox_label"><input type="checkbox" id="cs_set_nsfw"> แสดงบอท NSFW ในรายชื่อ</label>
+                <small id="cs_set_nodc" class="cs_setnote cs_warn" hidden>ยังไม่พบ Datacat SillyTavern Browser — แท็บ Datacat (และปุ่มส่งไป Datacat ของ JanitorAI) ต้องใช้ส่วนขยายนี้: <code>${DATACAT_REPO}</code></small>
 
                 <h4 class="cs_sethead">แมว Datacat บนแถบด้านบน</h4>
                 <div class="cs_radios">
@@ -677,8 +974,8 @@ function renderSettingsPanel() {
                 <small class="cs_setnote">ถ้าจอกระตุกตอนบอทตอบ ลอง “หยุดนิ่ง” หรือ “ซ่อน”</small>
 
                 <details class="cs_adv">
-                    <summary>การเชื่อมต่อ JanitorAI</summary>
-                    <small class="cs_setnote">รายชื่อในแท็บ JanitorAI อ่านผ่านพร็อกซีของ SillyTavern: ใน <code>config.yaml</code> ตั้ง <code>enableCorsProxy: true</code> แล้วรีสตาร์ท SillyTavern</small>
+                    <summary>การเชื่อมต่อ (JanitorAI / Chub / RisuRealm)</summary>
+                    <small class="cs_setnote">รายชื่อทุกแท็บอ่านผ่านพร็อกซีของ SillyTavern: ใน <code>config.yaml</code> ตั้ง <code>enableCorsProxy: true</code> แล้วรีสตาร์ท SillyTavern</small>
                     <label class="cs_field">เส้นทาง
                         <select id="cs_set_route" class="text_pole">
                             <option value="auto">อัตโนมัติ (พร็อกซี ST → พร็อกซีที่ตั้งไว้ → ตรง)</option>
@@ -687,24 +984,32 @@ function renderSettingsPanel() {
                             <option value="direct">ตรงจากเบราว์เซอร์</option>
                         </select>
                     </label>
-                    <label class="cs_field">พร็อกซีที่ตั้งเอง <small>(<code>{url}</code> = ที่อยู่ JanitorAI · พร็อกซีนั้นจะเห็นว่าคุณดูหน้าไหน)</small>
+                    <label class="cs_field">พร็อกซีที่ตั้งเอง <small>(<code>{url}</code> = ที่อยู่ของเว็บ · พร็อกซีนั้นจะเห็นว่าคุณดูหน้าไหน)</small>
                         <input type="text" id="cs_set_proxy" class="text_pole" placeholder="https://your-proxy.example/?url={url}">
                     </label>
-                    <label class="cs_field">API<input type="text" id="cs_set_api" class="text_pole"></label>
-                    <div class="cs_sorts">
-                        ${LISTS.map(([id, , , title]) => `<label class="cs_field">${title}<input type="text" class="text_pole" data-sort="${id}"></label>`).join('')}
-                    </div>
+                    <small class="cs_setnote">ถ้าเว็บเปลี่ยนที่อยู่ API หรือชื่อการเรียง (sort) แก้ได้ข้างล่าง ช่องว่าง = ค่าเริ่มต้น</small>
+                    ${SOURCE_IDS.map(sourceAdv).join('')}
                     <div class="cs_row"><div id="cs_set_test" class="menu_button"><i class="fa-solid fa-plug"></i> ทดสอบการเชื่อมต่อ</div><div id="cs_set_reset" class="menu_button">ค่าเริ่มต้น</div></div>
                     <div id="cs_set_testout" class="cs_setnote"></div>
                 </details>
-                <small class="cs_setnote">เปิดได้จากไอคอนบนแถบด้านบน เมนูไม้กายสิทธิ์ (Extensions) หรือคำสั่ง <code>/shelf</code> (<code>/shelf janitor</code>, <code>/shelf trending24</code>, <code>/shelf trending</code>, <code>/shelf popular</code>, <code>/shelf latest</code>)</small>
+                <small class="cs_setnote">เปิดได้จากไอคอนบนแถบด้านบน เมนูไม้กายสิทธิ์ (Extensions) หรือคำสั่ง <code>/shelf</code> (<code>/shelf janitor</code>, <code>/shelf chub</code>, <code>/shelf risu</code>, <code>/shelf trending24</code>, <code>/shelf chub downloads</code>, <code>/shelf risu latest</code>)</small>
             </div>
         </div>
     </div>`);
     const $ = id => document.getElementById(id);
+    const all = sel => document.querySelectorAll(`#cs_settings ${sel}`);
+    const forget = () => { ui.lists = {}; ui.apiWorked = {}; goodRoute = null; };
     $('cs_set_open').addEventListener('click', () => openShelf());
     $('cs_set_topbar').checked = !!s.topbar;
     $('cs_set_topbar').addEventListener('change', e => { s.topbar = e.target.checked; saveSettings(); renderTopbar(); });
+    for (const inp of all('[data-shown]')) {
+        inp.checked = !!s.shown[inp.dataset.shown];
+        inp.addEventListener('change', e => {
+            s.shown[inp.dataset.shown] = e.target.checked;
+            saveSettings();
+            if (ui.root) showTab(ui.tab);
+        });
+    }
     $('cs_set_tab').value = s.tab;
     $('cs_set_tab').addEventListener('change', e => { s.tab = e.target.value; saveSettings(); });
     $('cs_set_close').checked = !!s.closeAfterImport;
@@ -717,23 +1022,37 @@ function renderSettingsPanel() {
     const fillAdv = () => {
         $('cs_set_route').value = s.route;
         $('cs_set_proxy').value = s.proxy;
-        $('cs_set_api').value = s.api;
-        for (const inp of document.querySelectorAll('#cs_settings [data-sort]')) inp.value = s.sorts[inp.dataset.sort];
+        for (const inp of all('[data-api]')) inp.value = conf(inp.dataset.api).api;
+        for (const inp of all('[data-sort]')) inp.value = conf(inp.dataset.src).sorts[inp.dataset.sort];
     };
     fillAdv();
-    $('cs_set_route').addEventListener('change', e => { s.route = e.target.value; goodRoute = null; saveSettings(); });
-    $('cs_set_proxy').addEventListener('change', e => { s.proxy = e.target.value.trim(); goodRoute = null; saveSettings(); });
-    $('cs_set_api').addEventListener('change', e => { s.api = e.target.value.trim().replace(/\/+$/, '') || JANITOR_API; e.target.value = s.api; saveSettings(); });
-    for (const inp of document.querySelectorAll('#cs_settings [data-sort]')) {
+    $('cs_set_route').addEventListener('change', e => { s.route = e.target.value; forget(); saveSettings(); });
+    $('cs_set_proxy').addEventListener('change', e => { s.proxy = e.target.value.trim(); forget(); saveSettings(); });
+    for (const inp of all('[data-api]')) {
         inp.addEventListener('change', e => {
-            s.sorts[inp.dataset.sort] = e.target.value.trim() || DEFAULT_SORTS[inp.dataset.sort];
-            e.target.value = s.sorts[inp.dataset.sort];
+            const src = inp.dataset.api;
+            const value = e.target.value.trim().replace(/\/+$/, '') || SOURCES[src].api;
+            if (src === 'janitor') s.api = value; else s[src].api = value;
+            e.target.value = value;
+            forget();
+            saveSettings();
+        });
+    }
+    for (const inp of all('[data-sort]')) {
+        inp.addEventListener('change', e => {
+            const { src, sort } = inp.dataset;
+            const value = e.target.value.trim() || SOURCES[src].sorts[sort];
+            conf(src).sorts[sort] = value;
+            e.target.value = value;
             saveSettings();
         });
     }
     $('cs_set_reset').addEventListener('click', () => {
-        Object.assign(s, { route: DEFAULTS.route, proxy: '', api: JANITOR_API, sorts: { ...DEFAULT_SORTS } });
-        goodRoute = null;
+        Object.assign(s, {
+            route: DEFAULTS.route, proxy: '', api: JANITOR_API, sorts: { ...DEFAULT_SORTS },
+            chub: structuredClone(DEFAULTS.chub), risu: structuredClone(DEFAULTS.risu),
+        });
+        forget();
         saveSettings();
         fillAdv();
     });
@@ -741,15 +1060,20 @@ function renderSettingsPanel() {
         const out = $('cs_set_testout');
         out.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังทดสอบ…';
         goodRoute = null;
-        try {
-            const json = await fetchJson(listUrl({ api: s.api, sort: s.sorts[ui.jtab] ?? s.sorts.popular, page: 1, nsfw: s.nsfw }));
-            const r = normalizeList(json);
-            out.innerHTML = r.items.length
-                ? `<span class="cs_good"><i class="fa-solid fa-check"></i> ใช้ได้ ผ่าน ${esc(goodRoute)} · ได้ ${r.items.length} บอท</span>`
-                : `ต่อได้ผ่าน ${esc(goodRoute)} แต่ไม่พบรายชื่อบอทในคำตอบ: <code>${esc(JSON.stringify(json).slice(0, 200))}</code>`;
-        } catch (e) {
-            out.innerHTML = `<span class="cs_bad">ต่อไม่ได้</span><ul>${(e instanceof ReachError ? explainReach(e) : [esc(errText(e))]).map(t => `<li>${t}</li>`).join('')}</ul>`;
-        }
+        ui.apiWorked = {};
+        const lines = await Promise.all(SOURCE_IDS.filter(src => s.shown[src]).map(async src => {
+            const name = esc(SOURCES[src].name);
+            try {
+                const r = await fetchPage(src, { tab: listOf(src), page: 1, search: '' });
+                return r.items.length
+                    ? `<li><span class="cs_good"><i class="fa-solid fa-check"></i> ${name}: ใช้ได้ · ได้ ${r.items.length} บอท</span></li>`
+                    : `<li>${name}: ต่อได้ แต่ไม่พบรายชื่อบอทในคำตอบ: <code>${esc(JSON.stringify(r.json).slice(0, 200))}</code></li>`;
+            } catch (e) {
+                const tips = e instanceof ReachError ? explainReach(e, SOURCES[src].name) : [esc(errText(e))];
+                return `<li><span class="cs_bad">${name}: ต่อไม่ได้</span><ul>${tips.map(t => `<li>${t}</li>`).join('')}</ul></li>`;
+            }
+        }));
+        out.innerHTML = lines.length ? `<ul>${lines.join('')}</ul>${goodRoute ? `<small>เส้นทางที่ใช้: ${esc(goodRoute)}</small>` : ''}` : 'ไม่ได้เปิดแท็บไหนไว้';
     });
     // Datacat loads with its own order; check once things have settled.
     setTimeout(() => { $('cs_set_nodc').hidden = datacatReady(); }, 3000);
@@ -764,7 +1088,7 @@ function registerCommand() {
                 name: 'shelf',
                 aliases: ['janitor'],
                 callback: run,
-                helpString: 'เปิด Card Shelf — ใส่ต่อท้ายได้: datacat, janitor, trending24, trending, popular, latest',
+                helpString: 'เปิด Card Shelf — ใส่ต่อท้ายได้: datacat, janitor, chub, risu, trending24, trending, popular, latest, chub downloads, risu latest …',
             }));
         } else {
             c.registerSlashCommand?.('shelf', run, ['janitor'], 'เปิด Card Shelf', true, true);
