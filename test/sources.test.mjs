@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    chubListUrl, chubPageUrl, devalueUnflatten, dispositionName, megabytes, normalizeChubList, normalizeRisuList,
-    parseCount, risuDownloadUrl, risuListUrl, risuSiteUrl, safeFileName, SOURCE_IDS, SOURCES, unpackSvelteData,
+    chubListUrl, chubPageUrl, dispositionName, megabytes, normalizeChubList, normalizeRisuList,
+    parseCount, risuDownloadUrl, risuListUrl, risuSiteUrl, safeFileName, SOURCE_IDS, SOURCES,
 } from '../lib.js';
 
 test('every source has lists, sorts for each list, and an importer', () => {
@@ -50,56 +50,42 @@ test('Chub nodes are normalized, wrapped in data or not', () => {
     assert.equal(chubPageUrl('a b/c'), 'https://chub.ai/characters/a%20b/c');
 });
 
-test('RisuRealm list URL follows the site: sort, page, q, nsfw', () => {
-    const u = new URL(risuListUrl({ sort: 'trending', page: 2, search: 'elf', nsfw: true }));
-    assert.equal(u.origin + u.pathname, 'https://realm.risuai.net/__data.json');
-    assert.equal(u.searchParams.get('sort'), 'trending');
-    assert.equal(u.searchParams.get('page'), '2');
-    assert.equal(u.searchParams.get('q'), 'elf');
-    assert.equal(u.searchParams.get('nsfw'), 'true');
-    // "latest" is an empty sort, which must still be sent (no sort = recommended)
-    assert.equal(new URL(risuListUrl({ sort: '' })).searchParams.get('sort'), '');
-    // recommended has no pages, and a search there falls back to latest
-    const rec = new URL(risuListUrl({ sort: 'recommended', page: 1 }));
-    assert.equal(rec.searchParams.get('sort'), 'recommended');
-    assert.equal(rec.searchParams.has('page'), false);
-    assert.equal(new URL(risuListUrl({ sort: 'recommended', search: 'x' })).searchParams.get('sort'), '');
-    assert.equal(new URL(risuListUrl({ nsfw: false })).searchParams.has('nsfw'), false);
-    assert.equal(risuDownloadUrl('ab-cd'), 'https://realm.risuai.net/api/v1/download/charx-v3/ab-cd?non_commercial=true');
-    assert.equal(risuSiteUrl({ sort: 'downloads', search: 'elf', nsfw: false }), 'https://realm.risuai.net/?sort=downloads&q=elf');
-});
-
-test('devalue: objects, arrays, shared refs and special values', () => {
-    const v = devalueUnflatten([{ a: 1, b: 2, c: 3, d: -1 }, 'x', [3, 3], { n: 4 }, 7]);
-    assert.equal(v.a, 'x');
-    assert.equal(v.b[0], v.b[1]); // the same object twice
-    assert.equal(v.b[0], v.c);
-    assert.deepEqual(v.c, { n: 7 });
-    assert.equal(v.d, undefined);
-    assert.ok(devalueUnflatten([['Date', '2020-01-01T00:00:00.000Z']]) instanceof Date);
-});
-
-// A __data.json shaped like RisuRealm's, packed by hand.
-function risuData(cards, { page = 1, sort = 'trending' } = {}) {
-    const flat = [null];
-    const put = v => { flat.push(v); return flat.length - 1; };
-    const cardIdx = cards.map(c => {
-        const o = {};
-        for (const [k, v] of Object.entries(c)) o[k] = Array.isArray(v) ? put(v.map(put)) : put(v);
-        return put(o);
-    });
-    flat[0] = { cards: put(cardIdx), page: put(page), sort: put(sort), nsfw: put(true), mode: put('character'), search: put('') };
-    return { type: 'data', nodes: [null, { type: 'data', data: flat, uses: {} }] };
+/** The query string inside a RisuRealm hub list URL, as key → value. */
+function risuQuery(url) {
+    const u = new URL(url);
+    assert.equal(u.origin, 'https://sv.risuai.xyz');
+    assert.ok(u.pathname.startsWith('/realm/'));
+    assert.equal(u.searchParams.get('cache'), '30');
+    const raw = decodeURIComponent(u.pathname.slice('/realm/'.length));
+    return Object.fromEntries(raw.split('&&').map(kv => kv.split('==')));
 }
 
-test('RisuRealm data is unpacked and normalized', () => {
+test('RisuRealm list URL is the hub query the RisuAI app sends', () => {
+    // pages start at 0 on the hub; ours start at 1
+    assert.deepEqual(risuQuery(risuListUrl({ sort: 'trending', page: 2, search: 'elf', nsfw: true })),
+        { search: 'elf __shared', page: '1', nsfw: 'true', sort: 'trending', web: 'web' });
+    assert.deepEqual(risuQuery(risuListUrl({ sort: 'downloads', nsfw: false })),
+        { search: ' __shared', page: '0', nsfw: 'false', sort: 'downloads', web: 'web' });
+    // "latest" is an empty sort; "recommended" is page 0 only, and a search there falls back to latest
+    assert.equal(risuQuery(risuListUrl({ sort: '' })).sort, '');
+    assert.equal(risuQuery(risuListUrl({ sort: 'recommended', page: 3 })).page, '0');
+    assert.equal(risuQuery(risuListUrl({ sort: 'recommended', search: 'x' })).sort, '');
+    // characters that would break the path are encoded
+    assert.equal(risuQuery(risuListUrl({ search: 'a/b?c&&d' })).search, 'a/b?c');
+    assert.equal(risuDownloadUrl('ab-cd'), 'https://realm.risuai.net/api/v1/download/dynamic/ab-cd?cors=true');
+    assert.equal(risuSiteUrl({ sort: 'downloads', search: 'elf', nsfw: false }), 'https://realm.risuai.net/?sort=downloads&q=elf');
+    assert.equal(SOURCES.risu.cors, true);
+    assert.equal(SOURCES.chub.cors, true);
+    assert.ok(!SOURCES.janitor.cors);
+});
+
+test('RisuRealm hub list is normalized', () => {
     const card = {
         name: 'Ivy', desc: 'A vampire maid', download: '266.9k', id: '524c522c-ce32-43b6-ac00-21019562994d', img: 'abc123',
         tags: ['female', 'nsfw', 'OC'], haslore: true, hasEmotion: false, hasAsset: true, authorname: 'aukaru', license: 'CC BY-NC 4.0',
     };
-    const json = risuData(Array.from({ length: 30 }, (_, i) => ({ ...card, id: `${card.id.slice(0, -2)}${String(i).padStart(2, '0')}` })));
-    assert.equal(unpackSvelteData(json).cards.length, 30);
-    const r = normalizeRisuList(json, 1);
+    const full = Array.from({ length: 30 }, (_, i) => ({ ...card, id: `${card.id.slice(0, -2)}${String(i).padStart(2, '0')}` }));
+    const r = normalizeRisuList({ cards: full, additionalHTML: '' }, 1, { sort: 'trending' });
     assert.equal(r.items.length, 30);
     assert.equal(r.pages, 2); // a full page: there may be more
     const a = r.items[0];
@@ -111,12 +97,12 @@ test('RisuRealm data is unpacked and normalized', () => {
     assert.deepEqual(a.badges, ['lorebook', 'assets']);
     assert.equal(a.creator, 'aukaru');
     assert.equal(a.url, `https://realm.risuai.net/character/${a.id}`);
-    // a short page is the last; "recommended" is always one page
-    assert.equal(normalizeRisuList(risuData([card], { page: 3 }), 3).pages, 3);
-    assert.equal(normalizeRisuList(risuData(Array(30).fill(card), { sort: 'recommended' })).pages, 1);
-    // what RisuRealm returns for a page that doesn't exist: no cards, so the list ends there
-    const past = normalizeRisuList({ type: 'data', nodes: [null, { type: 'data', data: [{ post: 1 }, { error: 2, data: 3 }, 'Internal Server Error', []] }] }, 4);
-    assert.deepEqual([past.items.length, past.pages], [0, 4]);
+    assert.equal(normalizeRisuList(full).items.length, 30); // a bare array works too
+    // a short page is the last; "recommended" is one page unless it is a search
+    assert.equal(normalizeRisuList({ cards: [card] }, 3).pages, 3);
+    assert.equal(normalizeRisuList({ cards: full }, 1, { sort: 'recommended' }).pages, 1);
+    assert.equal(normalizeRisuList({ cards: full }, 1, { sort: 'recommended', search: 'x' }).pages, 2);
+    assert.equal(normalizeRisuList('Invaild Arguments, pages').items.length, 0);
 });
 
 test('counts, file names, sizes', () => {

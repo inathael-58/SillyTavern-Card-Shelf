@@ -16,10 +16,10 @@
 
 - [Datacat SillyTavern Browser](https://github.com/datacat-run/datacat-sillytavern-browser) — แท็บ Datacat คือหน้าต่างของ Datacat ตัวนี้
   (ใช้กับแท็บ Datacat และปุ่มส่งไป Datacat ของ JanitorAI · แท็บ Chub กับ RisuRealm ไม่ต้องใช้)
-- **เปิดพร็อกซีของ SillyTavern** สำหรับรายชื่อทุกแท็บ: เปิดไฟล์ `config.yaml` ในโฟลเดอร์ SillyTavern แก้ `enableCorsProxy: false` เป็น `enableCorsProxy: true` แล้วรีสตาร์ท SillyTavern
+- **เปิดพร็อกซีของ SillyTavern** สำหรับแท็บ JanitorAI: เปิดไฟล์ `config.yaml` ในโฟลเดอร์ SillyTavern แก้ `enableCorsProxy: false` เป็น `enableCorsProxy: true` แล้วรีสตาร์ท SillyTavern
 - **RisuRealm:** SillyTavern ที่รองรับไฟล์ `.charx` (เวอร์ชันใหม่ ๆ รองรับแล้ว)
 
-ทั้งสามเว็บไม่ให้เบราว์เซอร์อ่านข้อมูลตรง ๆ (CORS) Card Shelf จึงอ่านรายชื่อผ่านพร็อกซีที่มีอยู่ใน SillyTavern แล้ววาดรายชื่อเอง
+JanitorAI ไม่ให้เบราว์เซอร์อ่านข้อมูลตรง ๆ (CORS) Card Shelf จึงอ่านรายชื่อผ่านพร็อกซีที่มีอยู่ใน SillyTavern แล้ววาดรายชื่อเอง ส่วน Chub กับ RisuRealm อ่านตรงจากเบราว์เซอร์ได้ ไม่ต้องเปิดพร็อกซี (ถ้าเปิดไว้ จะใช้เป็นทางสำรอง)
 
 ## ติดตั้ง
 
@@ -45,7 +45,7 @@ Extensions → Manage extensions → อัปเดต Card Shelf แล้ว�
 2. เลือกแท็บเว็บ แล้วเลือกรายชื่อ (เช่น 🔥 Trending) หรือค้นหาชื่อบอท เลื่อนลงเพื่อโหลดเพิ่ม ปุ่ม ↗ ข้างช่องค้นหาเปิดหน้าเดียวกันบนเว็บนั้น
 3. แตะบอทที่ชอบ
    - **JanitorAI:** กด **ส่งไป Datacat** Card Shelf คัดลอกลิงก์ให้แล้วสลับไปแท็บ **Datacat** วางลิงก์ลงในช่องของ Datacat แล้วนำเข้าตามปกติ
-   - **Chub / RisuRealm:** กด **นำเข้า** แล้วรอ (RisuRealm แสดงขนาดที่ดาวน์โหลดไปแล้ว กดยกเลิกได้ การ์ดที่มีรูปอีโมชันเยอะใหญ่ได้เป็นร้อย MB)
+   - **Chub / RisuRealm:** กด **นำเข้า** แล้วรอ (RisuRealm แสดงว่าดาวน์โหลดไปกี่ MB จากทั้งหมดเท่าไร กดยกเลิกได้ การ์ดที่มีรูปอีโมชันเยอะใหญ่ได้เป็นร้อย MB)
 4. นำเข้าเสร็จ แชทของตัวละครใหม่เปิดขึ้น Card Shelf ปิดเองให้เห็นแชทเลย (ปิดตัวเลือกนี้ได้ในการตั้งค่า) ถ้าการ์ดมีลอร์บุ๊คฝังมา SillyTavern จะถามว่าจะนำเข้าลอร์บุ๊คไหมตามปกติ
 
 ปุ่มอื่นในหน้าบอท: **คัดลอกลิงก์** (เฉย ๆ) และ **เปิดใน …** ถ้าคัดลอกอัตโนมัติไม่ได้ จะมีช่องลิงก์ให้กดค้างคัดลอกเอง
@@ -81,10 +81,10 @@ GIF ที่เล่นตลอดทำให้เบราว์เซอ�
 ## ทำงานยังไง
 
 - แท็บ Datacat คือหน้าต่างของ Datacat SillyTavern Browser เอง (iframe เดิมของมัน พร้อมระบบนำเข้าของมัน) Card Shelf แค่ขอให้ Datacat เปิดหน้าต่าง แล้วย้ายมาวางในแท็บ ไม่ได้คุยกับ datacat.run เอง
-- แท็บ JanitorAI, Chub และ RisuRealm อ่านรายชื่อบอทผ่านพร็อกซีของ SillyTavern ในเครื่องคุณ ไม่ส่งแชท API key หรือการตั้งค่าใด ๆ ออกไป
+- แท็บ JanitorAI อ่านรายชื่อบอทผ่านพร็อกซีของ SillyTavern ในเครื่องคุณ แท็บ Chub กับ RisuRealm อ่านตรงจากเบราว์เซอร์ (พร็อกซีเป็นทางสำรอง) ไม่ส่งแชท API key หรือการตั้งค่าใด ๆ ออกไป
 - Chub: ปุ่มนำเข้าเรียก "Import from URL" ของ SillyTavern (`/api/content/importURL`) ตัวเดียวกับปุ่มนำเข้าจากลิงก์ใน SillyTavern
-- RisuRealm: ระบบนำเข้า RisuRealm ใน SillyTavern ขอไฟล์ PNG ซึ่ง RisuRealm ไม่ให้ดาวน์โหลดแล้วสำหรับการ์ดส่วนใหญ่ Card Shelf จึงดาวน์โหลดไฟล์ `.charx` (ผ่านพร็อกซีเดิม) แล้วส่งเข้าระบบนำเข้าตัวละครของ SillyTavern (`/api/characters/import`) ตัวเดียวกับปุ่มนำเข้าไฟล์
-- รายชื่อ RisuRealm มาจากข้อมูลที่หน้าเว็บของ RisuRealm โหลดเอง (`__data.json`) เพราะ RisuRealm ไม่มี API รายชื่อแบบเปิด
+- RisuRealm: ระบบนำเข้า RisuRealm ใน SillyTavern ขอไฟล์ PNG ซึ่ง RisuRealm ไม่ให้ดาวน์โหลดแล้วสำหรับการ์ดส่วนใหญ่ Card Shelf จึงดาวน์โหลดการ์ด (ส่วนใหญ่เป็นไฟล์ `.charx`) ทางเดียวกับแอป RisuAI แล้วส่งเข้าระบบนำเข้าตัวละครของ SillyTavern (`/api/characters/import`) ตัวเดียวกับปุ่มนำเข้าไฟล์
+- รายชื่อ RisuRealm มาจาก API ของ RisuRealm ตัวเดียวกับที่แอป RisuAI ใช้ (`sv.risuai.xyz`)
 
 ## พัฒนา
 
