@@ -12,8 +12,9 @@
  *
  * The Datacat tab is Datacat Browser's own window (its iframe and import bridge), placed
  * over the Card Shelf window; Card Shelf never talks to datacat.run itself.
- * None of the sites can be read from the browser directly (CORS), so lists are read through
- * SillyTavern's proxy and drawn here.
+ * JanitorAI can't be read from the browser directly (CORS), so its list goes through
+ * SillyTavern's proxy. Chub and RisuRealm allow it, so they are read directly, with the
+ * proxy only as a fallback.
  */
 
 import {
@@ -22,7 +23,7 @@ import {
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.3.0'; // keep in sync with manifest.json
+const VERSION = '2.3.1'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -61,7 +62,7 @@ function settings() {
     for (const src of ['chub', 'risu']) {
         const d = DEFAULTS[src];
         if (!s[src] || typeof s[src] !== 'object') s[src] = structuredClone(d);
-        if (!s[src].api) s[src].api = d.api;
+        if (!s[src].api || (SOURCES[src].oldApis ?? []).includes(s[src].api)) s[src].api = d.api;
         s[src].sorts ??= {};
         for (const [k, v] of Object.entries(d.sorts)) if (s[src].sorts[k] === undefined || s[src].sorts[k] === null) s[src].sorts[k] = v;
         if (!SOURCES[src].lists.some(l => l[0] === s.pick[src])) s.pick[src] = SOURCES[src].lists[0][0];
@@ -159,11 +160,15 @@ function watchDatacat() {
 
 // ---------------------------------------------------------------- reaching the sites
 //
-// None of the sites allow other sites to read them from the browser (CORS), so requests go
+// JanitorAI doesn't allow other sites to read it from the browser (CORS), so its requests go
 // through SillyTavern's own CORS proxy (/proxy/, `enableCorsProxy: true` in config.yaml), or
-// a proxy you choose. The route that worked is tried first next time.
+// a proxy you choose. Chub and RisuRealm do allow it (`cors` in SOURCES): they are read
+// directly first, and the proxy is only a fallback. The route that worked for a host is
+// tried first next time.
 
-let goodRoute = null;
+const goodRoutes = new Map(); // host → route
+const forgetRoutes = () => goodRoutes.clear();
+const hostOf = url => { try { return new URL(url).host; } catch { return ''; } };
 
 class ReachError extends Error {
     constructor(attempts) {
@@ -185,10 +190,13 @@ function siteMessage(text) {
  * Fetch url by each route in turn until `read(response)` succeeds; `read` throws to try the
  * next route. An abort stops at once.
  */
-async function viaRoutes(url, read, { signal, accept = 'application/json' } = {}) {
+async function viaRoutes(url, read, { signal, accept = 'application/json', cors = false } = {}) {
     const s = settings();
     let order = routeOrder(s.route, s.proxy);
-    if (goodRoute && order.includes(goodRoute)) order = [goodRoute, ...order.filter(r => r !== goodRoute)];
+    if (cors) order = ['direct', ...order.filter(r => r !== 'direct')];
+    const host = hostOf(url);
+    const known = goodRoutes.get(host);
+    if (known && order.includes(known)) order = [known, ...order.filter(r => r !== known)];
     const attempts = [];
     for (const route of order) {
         const target = routedUrl(url, route, s.proxy);
@@ -208,7 +216,7 @@ async function viaRoutes(url, read, { signal, accept = 'application/json' } = {}
         }
         try {
             const out = await read(res);
-            goodRoute = route;
+            goodRoutes.set(host, route);
             return out;
         } catch (e) {
             if (signal?.aborted) throw e;
@@ -218,14 +226,14 @@ async function viaRoutes(url, read, { signal, accept = 'application/json' } = {}
     throw new ReachError(attempts);
 }
 
-const fetchJson = url => viaRoutes(url, async res => {
+const fetchJson = (url, opts) => viaRoutes(url, async res => {
     const text = await res.text();
     try {
         return JSON.parse(text);
     } catch {
         throw new Error(/cloudflare|challenge|<html/i.test(text) ? 'cloudflare' : 'not json');
     }
-});
+}, opts);
 
 /** What went wrong, in words, with what to do about it. */
 function explainReach(err, site = 'เว็บ') {
@@ -342,7 +350,7 @@ function buildWindow() {
         setListOf(ui.tab, b.dataset.list);
         renderList();
     });
-    q('.cs_jreload').addEventListener('click', () => { delete ui.lists[listKey()]; goodRoute = null; renderList(); });
+    q('.cs_jreload').addEventListener('click', () => { delete ui.lists[listKey()]; forgetRoutes(); renderList(); });
     q('.cs_jout').addEventListener('click', () => {
         if (!isSource(ui.tab)) return;
         const src = SOURCES[ui.tab];
@@ -485,10 +493,12 @@ async function fetchPage(srcId, { tab, page, search }) {
     let last;
     for (const api of apis) {
         try {
-            const json = await fetchJson(src.listUrl({ api, sort: c.sorts[tab], page, search, nsfw: settings().nsfw }));
-            const r = src.normalize(json, page);
+            const sort = c.sorts[tab];
+            const url = src.listUrl({ api, sort, page, search, nsfw: settings().nsfw });
+            const json = await fetchJson(url, { cors: !!src.cors });
+            const r = src.normalize(json, page, { sort, search });
             ui.apiWorked[srcId] = api;
-            return { ...r, json };
+            return { ...r, json, route: goodRoutes.get(hostOf(url)) };
         } catch (e) {
             last = e;
             if (!(e instanceof ReachError)) throw e;
@@ -581,7 +591,7 @@ function updateMore(list) {
                 </div>
                 ${datacatHint}
             </div>`;
-        more.querySelector('.cs_retry').addEventListener('click', () => { list.error = null; goodRoute = null; updateMore(list); loadMore(listKey(list.src)); });
+        more.querySelector('.cs_retry').addEventListener('click', () => { list.error = null; forgetRoutes(); updateMore(list); loadMore(listKey(list.src)); });
         more.querySelector('.cs_opensite').addEventListener('click', () => ui.root.querySelector('.cs_jout').click());
     } else if (list.loading) {
         more.innerHTML = '<div class="cs_loading"><i class="fa-solid fa-circle-notch fa-spin"></i> กำลังโหลด…</div>';
@@ -731,28 +741,45 @@ async function fileFromStImporter(url, signal) {
     return new File([blob], name, { type: blob.type });
 }
 
-/** Download a RisuRealm .charx through the proxy, reporting bytes as they arrive. */
+/**
+ * Download a RisuRealm card, reporting bytes (and the total, when known) as they arrive.
+ * Read directly (the download allows any site); through the proxy only as a fallback, which
+ * passes no headers on, so the kind of file is told by its first bytes.
+ */
 async function fileFromRisu(item, signal, onBytes) {
-    const url = risuDownloadUrl(item.id, conf('risu').api);
-    const blob = await viaRoutes(url, async res => {
+    const { blob, kind } = await viaRoutes(risuDownloadUrl(item.id), async res => {
+        const total = Number(res.headers.get('Content-Length')) || 0;
         const reader = res.body?.getReader?.();
-        if (!reader) return res.blob();
         const chunks = [];
         let got = 0;
-        for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (!chunks.length && !(value[0] === 0x50 && value[1] === 0x4b)) { // "PK": a zip
-                reader.cancel().catch(() => {});
-                throw new Error(new TextDecoder().decode(value.slice(0, 200)).includes('<') ? 'cloudflare' : 'not a charx');
+        if (reader) {
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (!chunks.length && value[0] === 0x3c) { // "<": a web page, not a card
+                    reader.cancel().catch(() => {});
+                    throw new Error('cloudflare');
+                }
+                chunks.push(value);
+                got += value.length;
+                onBytes(got, total);
             }
-            chunks.push(value);
-            got += value.length;
-            onBytes(got);
+        } else {
+            chunks.push(new Uint8Array(await res.arrayBuffer()));
         }
-        return new Blob(chunks, { type: 'application/zip' });
-    }, { signal, accept: 'application/zip, application/octet-stream, */*' });
-    return new File([blob], safeFileName(item.name, 'charx'), { type: 'application/zip' });
+        const head = chunks[0] ?? new Uint8Array();
+        const kind = head[0] === 0x50 && head[1] === 0x4b ? 'charx'          // "PK": a zip
+            : head[0] === 0x89 && head[1] === 0x50 ? 'png'
+                : head[0] === 0x7b ? 'json' : '';
+        if (!kind) throw new Error('not a card');
+        return { blob: new Blob(chunks), kind };
+    }, { signal, accept: 'application/charx, application/zip, image/png, application/json, */*', cors: true });
+    if (kind === 'json') { // { card, img }: the card without its picture
+        const data = JSON.parse(await blob.text());
+        const card = data?.card ?? data;
+        return new File([JSON.stringify(card)], safeFileName(item.name, 'json'), { type: 'application/json' });
+    }
+    return new File([blob], safeFileName(item.name, kind), { type: kind === 'png' ? 'image/png' : 'application/zip' });
 }
 
 /** SillyTavern's character import. Returns the new character's avatar file name. */
@@ -806,11 +833,11 @@ async function importItem(item, sheet) {
             say(`<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังดาวน์โหลดการ์ดจาก ${esc(src.name)}… <b class="cs_bytes"></b> ${cancel}<small>RisuRealm ส่งการ์ดเป็นไฟล์ .charx รวมรูปอีโมชันมาด้วย บางใบใหญ่หลายสิบ MB</small>`);
             wireCancel();
             let last = 0;
-            file = await fileFromRisu(item, ctl.signal, got => {
+            file = await fileFromRisu(item, ctl.signal, (got, total) => {
                 if (Date.now() - last < 250) return;
                 last = Date.now();
                 const span = box.querySelector('.cs_bytes');
-                if (span) span.textContent = megabytes(got);
+                if (span) span.textContent = total ? `${megabytes(got)} / ${megabytes(total)} (${Math.floor((got / total) * 100)}%)` : megabytes(got);
             });
         } else {
             say(`<i class="fa-solid fa-circle-notch fa-spin"></i> SillyTavern กำลังดึงการ์ดจาก ${esc(src.name)}… ${cancel}`);
@@ -975,7 +1002,7 @@ function renderSettingsPanel() {
 
                 <details class="cs_adv">
                     <summary>การเชื่อมต่อ (JanitorAI / Chub / RisuRealm)</summary>
-                    <small class="cs_setnote">รายชื่อทุกแท็บอ่านผ่านพร็อกซีของ SillyTavern: ใน <code>config.yaml</code> ตั้ง <code>enableCorsProxy: true</code> แล้วรีสตาร์ท SillyTavern</small>
+                    <small class="cs_setnote">JanitorAI ต้องอ่านผ่านพร็อกซีของ SillyTavern: ใน <code>config.yaml</code> ตั้ง <code>enableCorsProxy: true</code> แล้วรีสตาร์ท SillyTavern · Chub กับ RisuRealm อ่านตรงได้ ใช้พร็อกซีเป็นทางสำรองเท่านั้น</small>
                     <label class="cs_field">เส้นทาง
                         <select id="cs_set_route" class="text_pole">
                             <option value="auto">อัตโนมัติ (พร็อกซี ST → พร็อกซีที่ตั้งไว้ → ตรง)</option>
@@ -998,7 +1025,7 @@ function renderSettingsPanel() {
     </div>`);
     const $ = id => document.getElementById(id);
     const all = sel => document.querySelectorAll(`#cs_settings ${sel}`);
-    const forget = () => { ui.lists = {}; ui.apiWorked = {}; goodRoute = null; };
+    const forget = () => { ui.lists = {}; ui.apiWorked = {}; forgetRoutes(); };
     $('cs_set_open').addEventListener('click', () => openShelf());
     $('cs_set_topbar').checked = !!s.topbar;
     $('cs_set_topbar').addEventListener('change', e => { s.topbar = e.target.checked; saveSettings(); renderTopbar(); });
@@ -1059,21 +1086,22 @@ function renderSettingsPanel() {
     $('cs_set_test').addEventListener('click', async () => {
         const out = $('cs_set_testout');
         out.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังทดสอบ…';
-        goodRoute = null;
+        forgetRoutes();
         ui.apiWorked = {};
         const lines = await Promise.all(SOURCE_IDS.filter(src => s.shown[src]).map(async src => {
             const name = esc(SOURCES[src].name);
             try {
                 const r = await fetchPage(src, { tab: listOf(src), page: 1, search: '' });
+                const via = { direct: 'อ่านตรง', st: 'ผ่านพร็อกซีของ SillyTavern', custom: 'ผ่านพร็อกซีที่ตั้งเอง' }[r.route] ?? '';
                 return r.items.length
-                    ? `<li><span class="cs_good"><i class="fa-solid fa-check"></i> ${name}: ใช้ได้ · ได้ ${r.items.length} บอท</span></li>`
+                    ? `<li><span class="cs_good"><i class="fa-solid fa-check"></i> ${name}: ใช้ได้ · ได้ ${r.items.length} บอท${via ? ` · ${via}` : ''}</span></li>`
                     : `<li>${name}: ต่อได้ แต่ไม่พบรายชื่อบอทในคำตอบ: <code>${esc(JSON.stringify(r.json).slice(0, 200))}</code></li>`;
             } catch (e) {
                 const tips = e instanceof ReachError ? explainReach(e, SOURCES[src].name) : [esc(errText(e))];
                 return `<li><span class="cs_bad">${name}: ต่อไม่ได้</span><ul>${tips.map(t => `<li>${t}</li>`).join('')}</ul></li>`;
             }
         }));
-        out.innerHTML = lines.length ? `<ul>${lines.join('')}</ul>${goodRoute ? `<small>เส้นทางที่ใช้: ${esc(goodRoute)}</small>` : ''}` : 'ไม่ได้เปิดแท็บไหนไว้';
+        out.innerHTML = lines.length ? `<ul>${lines.join('')}</ul>` : 'ไม่ได้เปิดแท็บไหนไว้';
     });
     // Datacat loads with its own order; check once things have settled.
     setTimeout(() => { $('cs_set_nodc').hidden = datacatReady(); }, 3000);

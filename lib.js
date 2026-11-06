@@ -206,7 +206,8 @@ export function normalizeChubList(json, page = 1) {
 // ---------------------------------------------------------------- RisuRealm
 
 export const RISU_SITE = 'https://realm.risuai.net';
-export const RISU_RESOURCE = 'https://sv.risuai.xyz/resource/';
+export const RISU_HUB = 'https://sv.risuai.xyz';
+export const RISU_RESOURCE = `${RISU_HUB}/resource/`;
 const RISU_PAGE_SIZE = 30;
 
 // Tab → RisuRealm's `sort` value ('' is the site's own "Latest"). "recommended" is one
@@ -219,23 +220,21 @@ export const RISU_SORTS = Object.freeze({
 });
 
 /**
- * RisuRealm has no public list API: the list is the data its own pages load
- * (SvelteKit's __data.json), the same one the home page uses.
+ * RisuRealm's list, from the same hub API the RisuAI app reads (sv.risuai.xyz/realm/…).
+ * It allows any site to read it (CORS *), so no proxy is needed. The query is one string,
+ * `key==value&&…`, in the path; pages start at 0.
  */
-export function risuListUrl({ api = RISU_SITE, sort = RISU_SORTS.trending, page = 1, search = '', nsfw = true } = {}) {
-    const q = new URLSearchParams();
+export function risuListUrl({ api = RISU_HUB, sort = RISU_SORTS.trending, page = 1, search = '', nsfw = true } = {}) {
     // "recommended" is a fixed pick without pages or search: a search falls back to latest
-    const s = search && sort === 'recommended' ? '' : sort;
-    if (s !== undefined && s !== null) q.set('sort', s);
-    if (s !== 'recommended') q.set('page', String(Math.max(1, Math.floor(Number(page) || 1))));
-    if (search) q.set('q', search);
-    if (nsfw) q.set('nsfw', 'true');
-    return `${trimSlash(api)}/__data.json?${q}`;
+    const s = search && sort === 'recommended' ? '' : (sort ?? '');
+    const p = s === 'recommended' ? 0 : Math.max(0, Math.floor(Number(page) || 1) - 1);
+    const query = `search==${search ? `${search} ` : ' '}__shared&&page==${p}&&nsfw==${nsfw ? 'true' : 'false'}&&sort==${s}&&web==web`;
+    return `${trimSlash(api)}/realm/${encodeURIComponent(query)}?cache=30`;
 }
 
 export const risuPageUrl = id => `${RISU_SITE}/character/${encodeURIComponent(id)}`;
-/** The .charx download: the only format RisuRealm still serves for most cards. */
-export const risuDownloadUrl = (id, api = RISU_SITE) => `${trimSlash(api)}/api/v1/download/charx-v3/${encodeURIComponent(id)}?non_commercial=true`;
+/** The card download the RisuAI app uses: .charx (or PNG), open to any site (CORS *). */
+export const risuDownloadUrl = id => `${RISU_SITE}/api/v1/download/dynamic/${encodeURIComponent(id)}?cors=true`;
 
 export function risuSiteUrl({ sort = RISU_SORTS.trending, search = '', nsfw = true } = {}) {
     const q = new URLSearchParams();
@@ -253,61 +252,6 @@ export function parseCount(v) {
     if (!m) return 0;
     const mult = { k: 1e3, m: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()] ?? 1;
     return Math.round(Number(m[1]) * mult) || 0;
-}
-
-/**
- * SvelteKit's __data.json packs each page's data with `devalue`: one flat array where
- * objects and arrays hold indices into the same array. Returns the first data node, unpacked.
- */
-export function unpackSvelteData(json) {
-    const node = Array.isArray(json?.nodes) ? json.nodes.find(n => n && n.type === 'data') : null;
-    if (!node) {
-        if (json?.type === 'error' || json?.type === 'redirect') throw new Error(`RisuRealm: ${json.type}`);
-        return null;
-    }
-    return devalueUnflatten(node.data);
-}
-
-export function devalueUnflatten(values) {
-    if (!Array.isArray(values)) return values;
-    const memo = new Map();
-    const SPECIAL = { '-1': undefined, '-3': NaN, '-4': Infinity, '-5': -Infinity, '-6': -0 };
-    const hydrate = i => {
-        if (typeof i !== 'number') return undefined;
-        if (i < 0) return SPECIAL[String(i)];
-        if (memo.has(i)) return memo.get(i);
-        const v = values[i];
-        if (v === null || typeof v !== 'object') { memo.set(i, v); return v; }
-        if (Array.isArray(v)) {
-            if (typeof v[0] === 'string') { // [type, ...] for Date, Set, Map, RegExp …
-                const [type, ...rest] = v;
-                let out;
-                switch (type) {
-                    case 'Date': out = new Date(rest[0]); break;
-                    case 'Set': out = new Set(); memo.set(i, out); for (const x of rest) out.add(hydrate(x)); return out;
-                    case 'Map': out = new Map(); memo.set(i, out); for (let k = 0; k < rest.length; k += 2) out.set(hydrate(rest[k]), hydrate(rest[k + 1])); return out;
-                    case 'BigInt': out = rest[0]; break;
-                    case 'null': {
-                        out = Object.create(null); memo.set(i, out);
-                        for (let k = 0; k < rest.length; k += 2) out[rest[k]] = hydrate(rest[k + 1]);
-                        return out;
-                    }
-                    default: out = rest.length === 1 ? hydrate(rest[0]) : rest;
-                }
-                memo.set(i, out);
-                return out;
-            }
-            const arr = [];
-            memo.set(i, arr);
-            for (const x of v) arr.push(x === -2 ? undefined : hydrate(x));
-            return arr;
-        }
-        const obj = {};
-        memo.set(i, obj);
-        for (const [k, x] of Object.entries(v)) obj[k] = hydrate(x);
-        return obj;
-    };
-    return hydrate(0);
 }
 
 export function risuImage(img) {
@@ -344,15 +288,13 @@ export function normalizeRisuCharacter(raw) {
     };
 }
 
-/** A RisuRealm __data.json → { items, total, page, pages }. */
-export function normalizeRisuList(json, page = 1) {
-    const data = unpackSvelteData(json); // a page past the end comes back as an error without cards
-    const cards = Array.isArray(data?.cards) ? data.cards : [];
+/** A RisuRealm hub list ({ cards } or a bare array) → { items, total, page, pages }. */
+export function normalizeRisuList(json, page = 1, { sort, search } = {}) {
+    const cards = Array.isArray(json) ? json : Array.isArray(json?.cards) ? json.cards : [];
     const items = cards.map(normalizeRisuCharacter).filter(Boolean);
-    const onePage = data?.sort === 'recommended';
+    const onePage = sort === 'recommended' && !search; // see risuListUrl
     const more = !onePage && items.length >= RISU_PAGE_SIZE;
-    const p = num(data?.page) || page;
-    return { items, total: 0, page: p, pages: more ? p + 1 : p };
+    return { items, total: 0, page, pages: more ? page + 1 : page };
 }
 
 // ---------------------------------------------------------------- sources
@@ -399,6 +341,7 @@ export const SOURCES = Object.freeze({
             ['latest', 'fa-clock', 'ล่าสุด', 'ล่าสุด'],
         ],
         ranked: tab => tab !== 'latest',
+        cors: true, // Chub's search answers any site: read it directly, the proxy is a fallback
         listUrl: chubListUrl,
         normalize: normalizeChubList,
         siteUrl: chubSiteUrl,
@@ -410,7 +353,8 @@ export const SOURCES = Object.freeze({
         short: 'Risu',
         icon: 'fa-chess-rook',
         site: RISU_SITE,
-        api: RISU_SITE,
+        api: RISU_HUB,
+        oldApis: [RISU_SITE], // 2.3.0 read the site's own page data; settings with it move to the hub
         sorts: RISU_SORTS,
         lists: [
             ['trending', 'fa-fire', 'Trending', 'Trending'],
@@ -419,6 +363,7 @@ export const SOURCES = Object.freeze({
             ['latest', 'fa-clock', 'ล่าสุด', 'ล่าสุด'],
         ],
         ranked: tab => tab !== 'latest' && tab !== 'recommended',
+        cors: true, // the hub API and the download answer any site: no proxy needed
         listUrl: risuListUrl,
         normalize: normalizeRisuList,
         siteUrl: risuSiteUrl,
