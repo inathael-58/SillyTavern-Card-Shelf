@@ -297,6 +297,173 @@ export function normalizeRisuList(json, page = 1, { sort, search } = {}) {
     return { items, total: 0, page, pages: more ? page + 1 : page };
 }
 
+// ---------------------------------------------------------------- .charx / .risum
+//
+// A RisuRealm .charx is a zip: card.json, the pictures, and module.risum, RisuAI's own
+// module file where Risu now keeps the card's regex scripts (and often its lorebook and Lua
+// triggers). SillyTavern imports card.json and the pictures but not the module, so Card
+// Shelf reads the module and turns its regex scripts into the character's own SillyTavern
+// regex scripts. Some cards are a JPEG with the zip stuck on the end; SillyTavern can't open
+// those, so the picture in front is cut off first.
+
+const u16 = (b, o) => b[o] | (b[o + 1] << 8);
+const u32 = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+
+/** Where the zip inside `bytes` starts and where its central directory is, or null. */
+export function zipLayout(bytes) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    for (let i = b.length - 22; i >= Math.max(0, b.length - 22 - 0xffff); i--) {
+        if (u32(b, i) !== 0x06054b50) continue; // end of central directory
+        const cdSize = u32(b, i + 12);
+        const cdOffset = u32(b, i + 16);
+        const start = i - cdSize - cdOffset; // > 0 when something (a JPEG) sits in front
+        if (start < 0) continue;
+        return { start, cd: start + cdOffset, cdEnd: i, count: u16(b, i + 10) };
+    }
+    return null;
+}
+
+/** The zip alone: bytes in front of it (a JPEG cover) cut off, so any zip reader opens it. */
+export function zipOnly(bytes) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const z = zipLayout(b);
+    return z && z.start > 0 ? b.subarray(z.start) : b;
+}
+
+/** Names and places of the files in a zip. */
+export function zipEntries(bytes) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const z = zipLayout(b);
+    if (!z) return [];
+    const out = [];
+    let p = z.cd;
+    for (let n = 0; n < z.count && p + 46 <= z.cdEnd && u32(b, p) === 0x02014b50; n++) {
+        const nameLen = u16(b, p + 28);
+        out.push({
+            name: new TextDecoder().decode(b.subarray(p + 46, p + 46 + nameLen)),
+            method: u16(b, p + 10),
+            size: u32(b, p + 20),
+            local: z.start + u32(b, p + 42),
+        });
+        p += 46 + nameLen + u16(b, p + 30) + u16(b, p + 32);
+    }
+    return out;
+}
+
+/** One file out of a zip, inflated (stored or deflate). Null when it isn't there. */
+export async function zipRead(bytes, name) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const e = zipEntries(b).find(x => x.name === name);
+    if (!e || u32(b, e.local) !== 0x04034b50) return null;
+    const at = e.local + 30 + u16(b, e.local + 26) + u16(b, e.local + 28);
+    const raw = b.subarray(at, at + e.size);
+    if (e.method === 0) return raw;
+    if (e.method !== 8 || typeof DecompressionStream !== 'function') return null;
+    const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+// RisuAI's RPack: one byte for another, through a fixed table (RisuAI, GPL-3.0).
+const RPACK_DECODE = Uint8Array.from(atob('LPeEi8ll+7afrrMDLQFpdB/ko+zuXDQhk0oPauJiAp4inP08/HHHxq1ZZwVwbYpEEvokhl+v0XpHzv5QY91RBm8Y4FKoCZ1Wc0y4U2zDoA4Zzz4NfgcyaEbqSPmZLqukSSBeVTU4DLzTsVgWeSgKGuHyzcQ526K6YHJ2fZXvf8jA3jeUv7UUgZIlRazn9WanKzZawRPjSzrojYMbfCewmkLrh6rcVI54JtJXKdS3+C+PiXXwQXfCHv/YFRHlBJcX8zHQmwDXyrRPKjvZsmvaXaE/MGG9kT1O5t++TYKMHSMQmGT0hTN7kEO7qYjx1qUc9sxuuVsLlu3V6cXLCKaAQA=='), c => c.charCodeAt(0));
+
+/** A RisuAI module file (.risum) → its module object ({ regex, lorebook, trigger … }), or null. */
+export function readRisum(bytes) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (b.length < 6 || b[0] !== 111 || b[1] !== 0) return null; // magic number, version 0
+    const len = u32(b, 2);
+    const main = b.subarray(6, 6 + len).map(x => RPACK_DECODE[x]);
+    try {
+        const j = JSON.parse(new TextDecoder().decode(main));
+        return j?.type === 'risuModule' && j.module && typeof j.module === 'object' ? j.module : null;
+    } catch { return null; }
+}
+
+/** What a RisuRealm .charx carries that SillyTavern leaves out: the module's regex, lorebook, triggers. */
+export async function charxExtras(bytes) {
+    const raw = await zipRead(bytes, 'module.risum').catch(() => null);
+    const mod = raw ? readRisum(raw) : null;
+    return {
+        regex: Array.isArray(mod?.regex) ? mod.regex : [],
+        lorebook: Array.isArray(mod?.lorebook) ? mod.lorebook : [],
+        triggers: Array.isArray(mod?.trigger) ? mod.trigger.length : 0,
+    };
+}
+
+// SillyTavern regex placements
+const ST_USER_INPUT = 1;
+const ST_AI_OUTPUT = 2;
+
+/**
+ * RisuAI regex scripts → SillyTavern regex scripts.
+ *   editinput → user input · editoutput → AI output (both change the message itself)
+ *   editprocess → the prompt only · editdisplay → the display only · disabled → off
+ * Risu's section headers (disabled, nothing to find) and patterns JavaScript can't read are
+ * dropped. Replacements that use RisuAI's own syntax ({{#when…}}, @@…) are kept as they are:
+ * SillyTavern has no equivalent, so those parts show as plain text.
+ */
+export function risuRegexToST(scripts, { idPrefix = 'risu' } = {}) {
+    const out = [];
+    (Array.isArray(scripts) ? scripts : []).forEach((r, i) => {
+        if (!r || typeof r !== 'object') return;
+        // SillyTavern reads "/pattern/flags" with a one-line match: write line breaks as \n
+        const find = String(r.in ?? '').replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        if (!find) return;
+        const flags = [...new Set(String(r.ableFlag ? (r.flag ?? 'g') : 'g').replace(/<[^>]*>/g, '').replace(/[^gimsuy]/g, ''))].join('') || 'g';
+        try { new RegExp(find, flags); } catch { return; }
+        const type = String(r.type ?? '');
+        const placement = type === 'editinput' ? [ST_USER_INPUT]
+            : type === 'editoutput' ? [ST_AI_OUTPUT] : [ST_USER_INPUT, ST_AI_OUTPUT];
+        out.push({
+            id: `${idPrefix}-${i}-${hashString(`${r.comment}|${find}`)}`,
+            scriptName: String(r.comment || `RisuAI regex ${i + 1}`),
+            findRegex: `/${find}/${flags}`,
+            replaceString: String(r.out ?? ''),
+            trimStrings: [],
+            placement,
+            disabled: type === 'disabled' || !['editinput', 'editoutput', 'editprocess', 'editdisplay'].includes(type),
+            markdownOnly: type === 'editdisplay',
+            promptOnly: type === 'editprocess',
+            runOnEdit: true,
+            substituteRegex: 0,
+            minDepth: null,
+            maxDepth: null,
+        });
+    });
+    return out;
+}
+
+/** RisuAI lorebook entries → a Character Card V3 character_book. Folders are left out. */
+export function risuLoreToBook(entries, name = '') {
+    const split = s => String(s ?? '').split(',').map(x => x.trim()).filter(Boolean);
+    const list = (Array.isArray(entries) ? entries : []).filter(e => e && typeof e === 'object' && e.mode !== 'folder');
+    return {
+        name: String(name || ''),
+        entries: list.map((e, i) => ({
+            id: i,
+            keys: split(e.key),
+            secondary_keys: split(e.secondkey),
+            comment: String(e.comment ?? ''),
+            content: String(e.content ?? ''),
+            constant: Boolean(e.alwaysActive) || e.mode === 'constant',
+            selective: Boolean(e.selective),
+            insertion_order: num(e.insertorder) || 100,
+            enabled: true,
+            use_regex: Boolean(e.useRegex),
+            extensions: {},
+        })),
+        extensions: {},
+    };
+}
+
+/** Does this text use RisuAI's own template syntax (CBS blocks), which SillyTavern can't run? */
+export const usesRisuSyntax = text => /\{\{#(when|if|each|pure|func)\b|\{\{\/(when|if|each)?\}\}|\{\{\?\s/.test(String(text ?? ''));
+
+function hashString(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    return (h >>> 0).toString(36);
+}
+
 // ---------------------------------------------------------------- sources
 //
 // Each list tab is one source. `importer` is how a bot gets into SillyTavern:

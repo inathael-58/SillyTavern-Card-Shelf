@@ -86,6 +86,17 @@ GIF ที่เล่นตลอดทำให้เบราว์เซอ�
 - RisuRealm: ระบบนำเข้า RisuRealm ใน SillyTavern ขอไฟล์ PNG ซึ่ง RisuRealm ไม่ให้ดาวน์โหลดแล้วสำหรับการ์ดส่วนใหญ่ Card Shelf จึงดาวน์โหลดการ์ด (ส่วนใหญ่เป็นไฟล์ `.charx`) ทางเดียวกับแอป RisuAI แล้วส่งเข้าระบบนำเข้าตัวละครของ SillyTavern (`/api/characters/import`) ตัวเดียวกับปุ่มนำเข้าไฟล์
 - รายชื่อ RisuRealm มาจาก API ของ RisuRealm ตัวเดียวกับที่แอป RisuAI ใช้ (`sv.risuai.xyz`)
 
+### การ์ดจาก RisuRealm ใน SillyTavern
+
+การ์ดบน RisuRealm ทำมาสำหรับแอป RisuAI ไฟล์ `.charx` เก็บ regex (และบางทีลอร์บุ๊คกับ Lua trigger) ไว้ในไฟล์ `module.risum` ของ RisuAI ซึ่ง SillyTavern ไม่อ่าน Card Shelf จึงช่วยดังนี้:
+
+- **regex:** แปลง regex จาก module (และจากตัวการ์ด) เป็น regex ของตัวละครใน SillyTavern ตอนเปิดแชทครั้งแรก SillyTavern จะถามว่าอนุญาตให้ใช้ไหม
+  - editinput → ข้อความผู้ใช้ · editoutput → ข้อความ AI · editprocess → เฉพาะ prompt · editdisplay → เฉพาะที่แสดงผล
+- **ลอร์บุ๊ค:** ถ้าตัวการ์ดไม่มีลอร์บุ๊ค แต่ module มี จะใส่ลอร์บุ๊คจาก module ให้
+- **การ์ดที่เป็นรูป JPEG ต่อด้วย zip:** ตัดรูปข้างหน้าออกก่อนส่งให้ SillyTavern (ไม่อย่างนั้น SillyTavern เปิดไม่ได้)
+
+**ที่ทำให้ไม่ได้:** คำสั่งเทมเพลตของ RisuAI (CBS เช่น `{{#when::lang::vis::0}}…`), Lua trigger และการแสดงรูปแบบ `<img="…">` ของ RisuAI ไม่มีใน SillyTavern ส่วนนั้นจะขึ้นเป็นข้อความดิบ Card Shelf จะเตือนตอนนำเข้าถ้าการ์ดใช้สิ่งเหล่านี้
+
 ## พัฒนา
 
 ```bash

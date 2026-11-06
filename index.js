@@ -18,12 +18,12 @@
  */
 
 import {
-    DEFAULT_SORTS, dockBox, JANITOR_API, megabytes, risuDownloadUrl, routedUrl, routeOrder, safeFileName, shortCount,
-    dispositionName, SOURCE_IDS, SOURCES,
+    charxExtras, DEFAULT_SORTS, dockBox, JANITOR_API, megabytes, risuDownloadUrl, risuLoreToBook, risuRegexToST, routedUrl,
+    routeOrder, safeFileName, shortCount, dispositionName, SOURCE_IDS, SOURCES, usesRisuSyntax, zipLayout, zipOnly,
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.3.1'; // keep in sync with manifest.json
+const VERSION = '2.3.2'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -768,18 +768,59 @@ async function fileFromRisu(item, signal, onBytes) {
             chunks.push(new Uint8Array(await res.arrayBuffer()));
         }
         const head = chunks[0] ?? new Uint8Array();
-        const kind = head[0] === 0x50 && head[1] === 0x4b ? 'charx'          // "PK": a zip
+        const blob = new Blob(chunks);
+        let kind = head[0] === 0x50 && head[1] === 0x4b ? 'charx'          // "PK": a zip
             : head[0] === 0x89 && head[1] === 0x50 ? 'png'
                 : head[0] === 0x7b ? 'json' : '';
+        // a JPEG cover with the .charx zip stuck on its end
+        if (!kind && head[0] === 0xff && head[1] === 0xd8 && zipLayout(new Uint8Array(await blob.arrayBuffer()))) kind = 'charx';
         if (!kind) throw new Error('not a card');
-        return { blob: new Blob(chunks), kind };
+        return { blob, kind };
     }, { signal, accept: 'application/charx, application/zip, image/png, application/json, */*', cors: true });
     if (kind === 'json') { // { card, img }: the card without its picture
         const data = JSON.parse(await blob.text());
         const card = data?.card ?? data;
-        return new File([JSON.stringify(card)], safeFileName(item.name, 'json'), { type: 'application/json' });
+        return { file: new File([JSON.stringify(card)], safeFileName(item.name, 'json'), { type: 'application/json' }) };
     }
-    return new File([blob], safeFileName(item.name, kind), { type: kind === 'png' ? 'image/png' : 'application/zip' });
+    if (kind === 'png') return { file: new File([blob], safeFileName(item.name, 'png'), { type: 'image/png' }) };
+    // .charx: keep what SillyTavern leaves out (module.risum), and cut off a JPEG cover in front
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const extras = await charxExtras(bytes).catch(e => { console.warn(LOG, 'charx extras', e); return null; });
+    return { file: new File([zipOnly(bytes)], safeFileName(item.name, 'charx'), { type: 'application/zip' }), extras };
+}
+
+/**
+ * After a RisuRealm import: give the character the regex scripts (from the card and from its
+ * module) and, when the card itself has none, the module's lorebook. Returns what was added
+ * and whether the card leans on RisuAI-only features.
+ */
+async function addRisuExtras(avatar, extras) {
+    await ctx().getCharacters?.();
+    const ch = ctx().characters.find(c => c.avatar === avatar);
+    if (!ch) return null;
+    const ext = ch.data?.extensions ?? {};
+    const regex = risuRegexToST([...(ext.risuai?.customScripts ?? []), ...(extras?.regex ?? [])]);
+    const data = {};
+    if (regex.length && !ext.regex_scripts?.length) data.extensions = { regex_scripts: regex };
+    const lore = extras?.lorebook ?? [];
+    if (lore.length && !ch.data?.character_book?.entries?.length) data.character_book = risuLoreToBook(lore, ch.name);
+    if (Object.keys(data).length) {
+        const res = await fetch('/api/characters/merge-attributes', {
+            method: 'POST',
+            headers: requestHeaders(),
+            body: JSON.stringify({ avatar, data }),
+        });
+        if (!res.ok) {
+            console.warn(LOG, 'merge-attributes', res.status, await res.text().catch(() => ''));
+            return { failed: true };
+        }
+    }
+    const texts = [ch.first_mes, ch.data?.first_mes, ...(ch.data?.alternate_greetings ?? []), ch.description, ...regex.map(r => r.replaceString)];
+    return {
+        regex: data.extensions ? regex.filter(r => !r.disabled).length : 0,
+        lore: data.character_book ? data.character_book.entries.length : 0,
+        risuOnly: texts.some(usesRisuSyntax) || (extras?.triggers ?? 0) > 0,
+    };
 }
 
 /** SillyTavern's character import. Returns the new character's avatar file name. */
@@ -829,16 +870,17 @@ async function importItem(item, sheet) {
     const wireCancel = () => box.querySelector('.cs_cancel')?.addEventListener('click', () => ctl.abort());
     try {
         let file;
+        let extras = null;
         if (src.importer === 'charx') {
             say(`<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังดาวน์โหลดการ์ดจาก ${esc(src.name)}… <b class="cs_bytes"></b> ${cancel}<small>RisuRealm ส่งการ์ดเป็นไฟล์ .charx รวมรูปอีโมชันมาด้วย บางใบใหญ่หลายสิบ MB</small>`);
             wireCancel();
             let last = 0;
-            file = await fileFromRisu(item, ctl.signal, (got, total) => {
+            ({ file, extras } = await fileFromRisu(item, ctl.signal, (got, total) => {
                 if (Date.now() - last < 250) return;
                 last = Date.now();
                 const span = box.querySelector('.cs_bytes');
                 if (span) span.textContent = total ? `${megabytes(got)} / ${megabytes(total)} (${Math.floor((got / total) * 100)}%)` : megabytes(got);
-            });
+            }));
         } else {
             say(`<i class="fa-solid fa-circle-notch fa-spin"></i> SillyTavern กำลังดึงการ์ดจาก ${esc(src.name)}… ${cancel}`);
             wireCancel();
@@ -847,6 +889,15 @@ async function importItem(item, sheet) {
         say(`<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังนำเข้า ${esc(item.name)} (${megabytes(file.size)})…`);
         const avatar = await importFile(file);
         globalThis.toastr?.success(`นำเข้า ${esc(item.name)} แล้ว`, 'Card Shelf');
+        if (src.importer === 'charx') {
+            const added = await addRisuExtras(avatar, extras).catch(e => { console.warn(LOG, 'risu extras', e); return { failed: true }; });
+            const lines = [];
+            if (added?.regex) lines.push(`เพิ่ม regex ของการ์ด ${added.regex} ตัว — SillyTavern จะถามให้อนุญาตตอนเปิดแชท`);
+            if (added?.lore) lines.push(`เพิ่มลอร์บุ๊คจาก module ${added.lore} รายการ`);
+            if (added?.failed) lines.push('เพิ่ม regex / ลอร์บุ๊คจาก module ของ RisuAI ไม่สำเร็จ');
+            if (added?.risuOnly) lines.push('การ์ดนี้ทำมาสำหรับ RisuAI: ใช้คำสั่งเทมเพลต ({{#when…}}) หรือ Lua trigger ที่ SillyTavern ไม่รองรับ บางส่วนจะเป็นข้อความดิบ');
+            if (lines.length) globalThis.toastr?.info(lines.map(esc).join('<br>'), 'Card Shelf', { timeOut: 15000, extendedTimeOut: 5000, escapeHtml: false });
+        }
         say(`<i class="fa-solid fa-check"></i> นำเข้าแล้ว — เปิดแชท…`, 'cs_good');
         if (!(await openCharacter(avatar))) say('<i class="fa-solid fa-check"></i> นำเข้าแล้ว — เปิดจากรายชื่อตัวละครได้เลย', 'cs_good');
     } catch (e) {
