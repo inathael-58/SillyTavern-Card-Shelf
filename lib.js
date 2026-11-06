@@ -455,6 +455,103 @@ export function risuLoreToBook(entries, name = '') {
     };
 }
 
+// ---------------------------------------------------------------- PNG cards
+//
+// When SillyTavern can't import a .charx, Card Shelf builds an ordinary PNG card from it:
+// the card's icon (turned into a PNG by the browser) with card.json in the PNG's text
+// chunks, `chara` and `ccv3`, the way SillyTavern writes its own cards.
+
+const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        t[n] = c >>> 0;
+    }
+    return t;
+})();
+
+export function crc32(bytes) {
+    let c = 0xffffffff;
+    for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+}
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/** UTF-8 text → base64 (what goes in a card's text chunk). */
+export function utf8ToBase64(text) {
+    const bytes = new TextEncoder().encode(String(text));
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+}
+
+/**
+ * Add tEXt chunks to a PNG, before IEND; existing chunks with the same keywords are dropped.
+ * Keywords and text must be Latin-1 (card data goes in as base64).
+ */
+export function pngWithText(png, entries) {
+    const b = png instanceof Uint8Array ? png : new Uint8Array(png);
+    if (!PNG_SIGNATURE.every((x, i) => b[i] === x)) throw new Error('not a PNG');
+    const keys = new Set(entries.map(([k]) => k.toLowerCase()));
+    const chunks = [];
+    let p = 8;
+    while (p + 12 <= b.length) {
+        const len = u32be(b, p);
+        const type = String.fromCharCode(...b.subarray(p + 4, p + 8));
+        const data = b.subarray(p + 8, p + 8 + len);
+        const whole = b.subarray(p, p + 12 + len);
+        p += 12 + len;
+        if (type === 'IEND') break;
+        if (type === 'tEXt') {
+            const zero = data.indexOf(0);
+            const key = String.fromCharCode(...data.subarray(0, zero < 0 ? data.length : zero)).toLowerCase();
+            if (keys.has(key)) continue;
+        }
+        chunks.push(whole);
+    }
+    const text = entries.map(([k, v]) => {
+        const data = new Uint8Array(k.length + 1 + v.length);
+        for (let i = 0; i < k.length; i++) data[i] = k.charCodeAt(i) & 0xff;
+        for (let i = 0; i < v.length; i++) data[k.length + 1 + i] = v.charCodeAt(i) & 0xff;
+        return pngChunk('tEXt', data);
+    });
+    const parts = [new Uint8Array(PNG_SIGNATURE), ...chunks, ...text, pngChunk('IEND', new Uint8Array())];
+    const out = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
+    let o = 0;
+    for (const x of parts) { out.set(x, o); o += x.length; }
+    return out;
+}
+
+function pngChunk(type, data) {
+    const out = new Uint8Array(12 + data.length);
+    const v = new DataView(out.buffer);
+    v.setUint32(0, data.length);
+    for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+    out.set(data, 8);
+    v.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+    return out;
+}
+
+const u32be = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+
+/** The zip path of a card's icon (the one named "main" first), from its assets list. */
+export function cardIconPath(card) {
+    const assets = Array.isArray(card?.data?.assets) ? card.data.assets : [];
+    const icons = assets.filter(a => a?.type === 'icon' && typeof a.uri === 'string');
+    const pick = icons.find(a => String(a.name).toLowerCase() === 'main') ?? icons[0];
+    if (!pick) return '';
+    const m = pick.uri.match(/^(?:embeded:\/\/|embedded:\/\/|__asset:)(.+)$/i);
+    return m ? m[1].replace(/^\/+/, '') : '';
+}
+
+/** The text chunks of a PNG card for this card JSON. */
+export const cardTextChunks = card => {
+    const json = JSON.stringify(card);
+    return [['chara', utf8ToBase64(json)], ['ccv3', utf8ToBase64(json)]];
+};
+
 /** Does this text use RisuAI's own template syntax (CBS blocks), which SillyTavern can't run? */
 export const usesRisuSyntax = text => /\{\{#(when|if|each|pure|func)\b|\{\{\/(when|if|each)?\}\}|\{\{\?\s/.test(String(text ?? ''));
 
