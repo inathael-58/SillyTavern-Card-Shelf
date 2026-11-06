@@ -18,12 +18,12 @@
  */
 
 import {
-    charxExtras, DEFAULT_SORTS, dockBox, JANITOR_API, megabytes, risuDownloadUrl, risuLoreToBook, risuRegexToST, routedUrl,
+    cardIconPath, cardTextChunks, charxExtras, DEFAULT_SORTS, pngWithText, zipRead, dockBox, JANITOR_API, megabytes, risuDownloadUrl, risuLoreToBook, risuRegexToST, routedUrl,
     routeOrder, safeFileName, shortCount, dispositionName, SOURCE_IDS, SOURCES, usesRisuSyntax, zipLayout, zipOnly,
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.3.2'; // keep in sync with manifest.json
+const VERSION = '2.3.3'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -786,7 +786,51 @@ async function fileFromRisu(item, signal, onBytes) {
     // .charx: keep what SillyTavern leaves out (module.risum), and cut off a JPEG cover in front
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const extras = await charxExtras(bytes).catch(e => { console.warn(LOG, 'charx extras', e); return null; });
-    return { file: new File([zipOnly(bytes)], safeFileName(item.name, 'charx'), { type: 'application/zip' }), extras };
+    return { file: new File([zipOnly(bytes)], safeFileName(item.name, 'charx'), { type: 'application/zip' }), extras, bytes };
+}
+
+/** Any image the browser can show (WebP, JPEG, PNG …) → PNG bytes. No image → a plain grey card. */
+async function imageToPng(bytes) {
+    let source = null;
+    if (bytes?.length) {
+        try {
+            source = await createImageBitmap(new Blob([bytes]));
+        } catch {
+            const url = URL.createObjectURL(new Blob([bytes]));
+            try {
+                source = await new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                    img.src = url;
+                });
+            } catch { source = null; } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+        }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = source?.width || 400;
+    canvas.height = source?.height || 600;
+    const g = canvas.getContext('2d');
+    if (source) g.drawImage(source, 0, 0);
+    else { g.fillStyle = '#777'; g.fillRect(0, 0, canvas.width, canvas.height); }
+    source?.close?.();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('สร้างรูป PNG ไม่ได้');
+    return new Uint8Array(await blob.arrayBuffer());
+}
+
+/**
+ * A .charx turned into an ordinary PNG card: its icon as a PNG, card.json in the text chunks.
+ * For when SillyTavern won't take the .charx itself (the emotion images in it are left out).
+ */
+async function charxToPngFile(bytes, name) {
+    const raw = await zipRead(bytes, 'card.json');
+    if (!raw) throw new Error('ไม่พบ card.json ในไฟล์ .charx');
+    const card = JSON.parse(new TextDecoder().decode(raw));
+    const iconPath = cardIconPath(card);
+    const icon = iconPath ? await zipRead(bytes, iconPath).catch(() => null) : null;
+    const png = pngWithText(await imageToPng(icon), cardTextChunks(card));
+    return new File([png], safeFileName(name, 'png'), { type: 'image/png' });
 }
 
 /**
@@ -871,11 +915,13 @@ async function importItem(item, sheet) {
     try {
         let file;
         let extras = null;
+        let charxBytes = null;
+        let asPng = false;
         if (src.importer === 'charx') {
             say(`<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังดาวน์โหลดการ์ดจาก ${esc(src.name)}… <b class="cs_bytes"></b> ${cancel}<small>RisuRealm ส่งการ์ดเป็นไฟล์ .charx รวมรูปอีโมชันมาด้วย บางใบใหญ่หลายสิบ MB</small>`);
             wireCancel();
             let last = 0;
-            ({ file, extras } = await fileFromRisu(item, ctl.signal, (got, total) => {
+            ({ file, extras, bytes: charxBytes } = await fileFromRisu(item, ctl.signal, (got, total) => {
                 if (Date.now() - last < 250) return;
                 last = Date.now();
                 const span = box.querySelector('.cs_bytes');
@@ -887,11 +933,27 @@ async function importItem(item, sheet) {
             file = await fileFromStImporter(item.url, ctl.signal);
         }
         say(`<i class="fa-solid fa-circle-notch fa-spin"></i> กำลังนำเข้า ${esc(item.name)} (${megabytes(file.size)})…`);
-        const avatar = await importFile(file);
+        let avatar;
+        try {
+            avatar = await importFile(file);
+        } catch (e) {
+            if (!charxBytes) throw e;
+            // SillyTavern refused the .charx: build a PNG card from it and try that
+            console.warn(LOG, 'charx import failed, trying a PNG card', e);
+            say(`<i class="fa-solid fa-circle-notch fa-spin"></i> SillyTavern ไม่รับไฟล์ .charx นี้ — ลองนำเข้าแบบการ์ด PNG…`);
+            try {
+                avatar = await importFile(await charxToPngFile(charxBytes, item.name));
+                asPng = true;
+            } catch (e2) {
+                throw new Error(`${errText(e)} · แบบ PNG: ${errText(e2)}`);
+            }
+        }
+        charxBytes = null;
         globalThis.toastr?.success(`นำเข้า ${esc(item.name)} แล้ว`, 'Card Shelf');
         if (src.importer === 'charx') {
             const added = await addRisuExtras(avatar, extras).catch(e => { console.warn(LOG, 'risu extras', e); return { failed: true }; });
             const lines = [];
+            if (asPng) lines.push('SillyTavern ไม่รับไฟล์ .charx นี้ จึงนำเข้าเป็นการ์ด PNG แทน (รูปอีโมชันในไฟล์จะไม่มา)');
             if (added?.regex) lines.push(`เพิ่ม regex ของการ์ด ${added.regex} ตัว — SillyTavern จะถามให้อนุญาตตอนเปิดแชท`);
             if (added?.lore) lines.push(`เพิ่มลอร์บุ๊คจาก module ${added.lore} รายการ`);
             if (added?.failed) lines.push('เพิ่ม regex / ลอร์บุ๊คจาก module ของ RisuAI ไม่สำเร็จ');
