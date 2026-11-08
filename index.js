@@ -17,13 +17,14 @@
  * proxy only as a fallback.
  */
 
+import { createDiagnostics } from './diagnostics.js';
 import {
     cardIconPath, cardTextChunks, charxExtras, DEFAULT_SORTS, pngWithText, zipRead, dockBox, JANITOR_API, megabytes, risuDownloadUrl, risuLoreToBook, risuRegexToST, routedUrl,
     routeOrder, safeFileName, shortCount, dispositionName, SOURCE_IDS, SOURCES, usesRisuSyntax, zipLayout, zipOnly,
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.3.3'; // keep in sync with manifest.json
+const VERSION = '2.3.4'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -405,15 +406,21 @@ function openShelf(target) {
     const s = settings();
     ui.root.hidden = false;
     ui.open = true;
+    DIAG.noteOpen(String(target ?? ''));
     document.addEventListener('keydown', onKey, true);
     requestAnimationFrame(() => ui.root?.classList.add('cs_in'));
     const { tab, list } = parseTarget(target);
-    if (tab && list) setListOf(tab, list);
-    showTab(tab ?? s.tab);
+    try {
+        if (tab && list) setListOf(tab, list);
+        showTab(tab ?? s.tab);
+    } catch (err) {
+        DIAG.reportError('วาด Card Shelf ไม่ได้', err);
+    }
 }
 
 function closeShelf() {
     if (!ui.open) return;
+    DIAG.noteClose();
     ui.open = false;
     undockDatacat();
     closeSheet();
@@ -1140,6 +1147,7 @@ function renderSettingsPanel() {
     const all = sel => document.querySelectorAll(`#cs_settings ${sel}`);
     const forget = () => { ui.lists = {}; ui.apiWorked = {}; forgetRoutes(); };
     $('cs_set_open').addEventListener('click', () => openShelf());
+    DIAG.mount($('cs_set_open').parentElement);
     $('cs_set_topbar').checked = !!s.topbar;
     $('cs_set_topbar').addEventListener('change', e => { s.topbar = e.target.checked; saveSettings(); renderTopbar(); });
     for (const inp of all('[data-shown]')) {
@@ -1235,6 +1243,7 @@ function registerCommand() {
             c.registerSlashCommand?.('shelf', run, ['janitor'], 'เปิด Card Shelf', true, true);
         }
     } catch (e) { console.warn(LOG, 'slash command', e); }
+    DIAG.registerCommand(c, 'shelf-debug');
 }
 
 // ---------------------------------------------------------------- version check + hard refresh
@@ -1245,7 +1254,20 @@ function registerCommand() {
 
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
-const FILES = ['index.js', 'lib.js', 'style.css', 'manifest.json'];
+const FILES = ['index.js', 'lib.js', 'diagnostics.js', 'style.css', 'manifest.json'];
+
+// Extensions > Card Shelf > Diagnose (and /shelf-debug): opens the shelf, measures it, reports.
+const DIAG = createDiagnostics({
+    name: 'Card Shelf',
+    version: VERSION,
+    baseUrl: BASE_URL,
+    open: () => openShelf(),
+    close: () => closeShelf(),
+    isOpen: () => !!ui.open,
+    overlay: () => ui.root,
+    frame: () => ui.root?.querySelector('.cs_panel'),
+    state: () => `tab=${settings().tab}`,
+});
 let remoteVersion = '';
 let versionCheckedAt = 0;
 let versionToastShown = false;

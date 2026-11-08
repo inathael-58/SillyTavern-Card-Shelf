@@ -54,6 +54,8 @@ Extensions → Manage extensions → อัปเดต Card Shelf แล้ว�
 
 คำสั่ง: `/shelf` · `/shelf datacat` · `/shelf janitor` · `/shelf chub` · `/shelf risu` · `/shelf trending24` · `/shelf popular` · `/shelf chub downloads` · `/shelf risu latest` (`/janitor` ก็ได้)
 
+เปิดไม่ขึ้นหรือมีอะไรแปลก ๆ บนมือถือ: Extensions → Card Shelf → **ตรวจปัญหา** (หรือ `/shelf-debug`) ทดลองเปิดแล้วได้รายงานไว้คัดลอกส่งให้คนแก้
+
 ### ถ้ารายชื่อไม่ขึ้น หรือนำเข้าไม่ได้
 
 Card Shelf จะบอกว่าติดอะไรพร้อมวิธีแก้ เช่น พร็อกซียังไม่เปิด หรือ Cloudflare ของเว็บบล็อกเครื่องที่รัน SillyTavern ไปที่ **Extensions → Card Shelf → การเชื่อมต่อ → ทดสอบการเชื่อมต่อ** ได้ (ทดสอบทุกแท็บที่เปิดไว้) ระหว่างนั้นกด **เปิดบนเว็บ …** แล้วดาวน์โหลดการ์ดจากเว็บ มานำเข้าด้วยปุ่มนำเข้าของ SillyTavern (หรือคัดลอกลิงก์ JanitorAI มาวางในแท็บ Datacat) ได้เหมือนกัน
