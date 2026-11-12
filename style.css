@@ -25,7 +25,12 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 
 .cs_root {
     --cs-fg: var(--SmartThemeBodyColor, #e8e6ef);
+    /* The theme's Blur Tint colour is often see-through (glass themes pair it with a
+       backdrop blur). This window has no blur, so drop the alpha: the window must be
+       solid or the chat and the shelf show through it. Older browsers without relative
+       colours get the translucent mix painted over black instead (see --cs-solid). */
     --cs-bg: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1b1a21) 92%, #000);
+    --cs-solid: linear-gradient(var(--cs-bg), var(--cs-bg)), #000;
     --cs-card: color-mix(in srgb, var(--cs-fg) 6%, transparent);
     --cs-line: color-mix(in srgb, var(--cs-fg) 14%, transparent);
     --cs-dim: color-mix(in srgb, var(--cs-fg) 62%, transparent);
@@ -44,6 +49,9 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     font-size: 15px;
     line-height: 1.4;
 }
+@supports (color: rgb(from red r g b)) {
+    .cs_root { --cs-bg: color-mix(in srgb, rgb(from var(--SmartThemeBlurTintColor, #1b1a21) r g b / 1) 92%, #000); }
+}
 .cs_root[hidden] { display: none; }
 .cs_root *, .cs_root *::before, .cs_root *::after { box-sizing: border-box; }
 
@@ -59,7 +67,7 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     flex-direction: column;
     width: min(1100px, 100%);
     height: min(960px, 100%);
-    background: var(--cs-bg);
+    background: var(--cs-solid);
     border: 1px solid var(--cs-line);
     border-radius: 16px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
@@ -362,7 +370,7 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
     z-index: 3;
     display: flex;
     flex-direction: column;
-    background: var(--cs-bg);
+    background: var(--cs-solid);
 }
 .cs_sheet[hidden] { display: none; }
 .cs_sheetbar {
