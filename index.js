@@ -24,7 +24,7 @@ import {
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.3.4'; // keep in sync with manifest.json
+const VERSION = '2.3.5'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
