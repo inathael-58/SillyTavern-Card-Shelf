@@ -449,3 +449,16 @@ body.cs_dc_docked .datacat-browser-stable-layer .datacat-browser-titlebar { disp
 .cs_istatus.cs_bad { border-color: color-mix(in srgb, #e55 60%, var(--cs-line)); }
 .cs_actions button:disabled { opacity: 0.5; pointer-events: none; }
 .cs_end code { display: block; margin-top: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; opacity: 0.7; }
+
+/* แม่แบบสีที่อ่านออกเสมอ (theme-palette.js) — ชั้นวางการ์ดและหน้าตั้งค่า: พื้นทึบ สีเน้น/ตัวอักษรตัดกับพื้นจริง
+   ทำงานเมื่อคำนวณสีสำเร็จแล้วเท่านั้น (<html class="cs-pal">) ถ้าไม่สำเร็จจะใช้สีธีมตรง ๆ แบบเดิม */
+html.cs-pal :is(.cs_root, .cs_settings) {
+    --SmartThemeBlurTintColor: var(--cs-p-surface);
+    --SmartThemeBodyColor: var(--cs-p-fg);
+    --SmartThemeQuoteColor: var(--cs-p-accent-text);
+    --SmartThemeEmColor: var(--cs-p-em);
+    --SmartThemeUnderlineColor: var(--cs-p-underline);
+    --SmartThemeBorderColor: var(--cs-p-line);
+}
+/* พื้นทึบอยู่แล้ว ไม่ต้องผสมดำเพิ่ม — สีเน้นถูกปรับให้ตัดกับพื้นนี้พอดี */
+html.cs-pal .cs_root { --cs-bg: var(--cs-p-surface); --cs-solid: var(--cs-p-surface); }
