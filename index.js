@@ -18,13 +18,14 @@
  */
 
 import { createDiagnostics } from './diagnostics.js';
+import { installThemePalette } from './theme-palette.js';
 import {
     cardIconPath, cardTextChunks, charxExtras, DEFAULT_SORTS, pngWithText, zipRead, dockBox, JANITOR_API, megabytes, risuDownloadUrl, risuLoreToBook, risuRegexToST, routedUrl,
     routeOrder, safeFileName, shortCount, dispositionName, SOURCE_IDS, SOURCES, usesRisuSyntax, zipLayout, zipOnly,
 } from './lib.js';
 
 const MODULE = 'card_shelf';
-const VERSION = '2.3.5'; // keep in sync with manifest.json
+const VERSION = '2.3.6'; // keep in sync with manifest.json
 const LOG = '[CardShelf]';
 const DATACAT_REPO = 'https://github.com/datacat-run/datacat-sillytavern-browser';
 
@@ -1254,7 +1255,7 @@ function registerCommand() {
 
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
-const FILES = ['index.js', 'lib.js', 'diagnostics.js', 'style.css', 'manifest.json'];
+const FILES = ['index.js', 'lib.js', 'diagnostics.js', 'theme-palette.js', 'style.css', 'manifest.json'];
 
 // Extensions > Card Shelf > Diagnose (and /shelf-debug): opens the shelf, measures it, reports.
 const DIAG = createDiagnostics({
@@ -1332,6 +1333,8 @@ function watchVersion() {
 // ---------------------------------------------------------------- start
 
 jQuery(() => {
+    // สีที่อ่านออกเสมอ: แผงข้อมูลทึบ สีเน้นตัดกับพื้นจริง (ดู theme-palette.js)
+    try { installThemePalette({ prefix: 'cs' }); } catch (err) { console.warn('[Card Shelf] theme palette', err); }
     try {
         settings();
         renderSettingsPanel();
