@@ -3,8 +3,9 @@
 /* One visual system. Shape lock: the window 16, cards and boxes 12, small controls 8,
    tags, tabs and badges round. States come from theme-palette.js (--cs-p-*): text states
    use the 4.5:1 shades from its `colors` option, borders and fills the 3:1 ones. Each
-   falls back to the old fixed color if the palette could not run. */
-.cs_root, .cs_settings {
+   falls back to the old fixed color if the palette could not run. :root too, because the
+   Datacat window docked into the shelf lives outside .cs_root and uses the panel radius. */
+:root, .cs_root, .cs_settings {
     --cs-r-pill: 999px;
     --cs-r-panel: 16px;
     --cs-r-card: 12px;
