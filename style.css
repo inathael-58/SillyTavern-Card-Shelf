@@ -485,3 +485,7 @@ body.reduced-motion :is(.cs_root, .cs_settings) .fa-spin { animation: none; }
 @media (prefers-reduced-motion: reduce) {
     :is(.cs_root, .cs_settings) .fa-spin { animation: none; }
 }
+
+/* ST's plain .menu_button is display:flex, which drops the space between an icon and its
+   label. Zero-specificity roots, so a gap this extension already sets still wins. */
+:where([class^="cs_"], [class*=" cs_"], [id^="cs_"]) .menu_button { gap: 0.4em; }
